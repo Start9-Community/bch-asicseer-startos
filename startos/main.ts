@@ -1,46 +1,70 @@
+import { configure } from './actions/configure'
+import { asicseerConf } from './fileModels/asicseer.conf'
+import { storeJson } from './fileModels/store.json'
+import { i18n } from './i18n'
 import { sdk } from './sdk'
-import { poolPort, soloPort, uiPort, rootDir, nodeMountpoint } from './utils'
-import { storeJson } from './file-models/store.json'
+import {
+  Network,
+  nodeMountpoint,
+  nodeNetwork,
+  nodeRpcBridge,
+  poolPort,
+  rootDir,
+  uiPort,
+} from './utils'
+
+/** The fields `main` reads out of the selected node's own `store.json`. */
+type NodeStore = {
+  network?: string
+  rpcUser?: string
+  rpcPassword?: string
+  fullySynced?: boolean
+}
+
+/**
+ * Which chain an address belongs to, by prefix. The node is not asked: Flowee's
+ * `validateaddress` is legacy-base58-only and calls every CashAddr invalid.
+ * A prefix-less address encodes no chain, so it is not judged here.
+ */
+const addressChain = (
+  address: string,
+): 'mainnet' | 'test' | 'regtest' | null => {
+  const a = address.trim().toLowerCase()
+  if (a.startsWith('bitcoincash:')) return 'mainnet'
+  if (a.startsWith('bchtest:')) return 'test'
+  if (a.startsWith('bchreg:')) return 'regtest'
+  return null
+}
+
+/** Testnet3, testnet4, scalenet and chipnet all use `bchtest:` addresses. */
+const networkChain = (network: Network) =>
+  network === 'mainnet' ? 'mainnet' : network === 'regtest' ? 'regtest' : 'test'
+
+const addressPrefix = {
+  mainnet: 'bitcoincash:',
+  test: 'bchtest:',
+  regtest: 'bchreg:',
+}
 
 export const main = sdk.setupMain(async ({ effects }) => {
-  console.log('Starting ASICSeer!')
+  console.info(i18n('Starting ASICSeer'))
 
-  const store = await storeJson.read().once()
-  const payoutAddress = store?.payoutAddress ?? ''
-  const poolFee = store?.poolFee ?? 1
-  const poolIdentifier = store?.poolIdentifier ?? 'ASICSeer'
-  const poolDifficulty = store?.poolDifficulty ?? 42
-  const disableDevDonation = store?.disableDevDonation ?? false
-  const nodePackageId = store?.nodePackageId ?? 'bitcoincashd'
+  // Mapped `.const()`, so writing these restarts the pool onto them. The
+  // transient flags below are outside it: `main` writes those itself.
+  const settings = await storeJson
+    .read((s) => ({
+      node: s.nodePackageId,
+      payoutAddress: s.payoutAddress.trim(),
+      poolFee: s.poolFee,
+      poolIdentifier: s.poolIdentifier,
+      poolDifficulty: s.poolDifficulty,
+      disableDevDonation: s.disableDevDonation,
+      floweeRpcUser: s.floweeRpcUser,
+      floweeRpcPassword: s.floweeRpcPassword,
+    }))
+    .const(effects)
+  const node = settings?.node ?? 'bitcoincashd'
 
-  const nodeAddressMode = store?.nodeAddressMode ?? 'auto'
-  const customNodeHost = (store?.customNodeHost ?? '').trim()
-  const customNodePort = store?.customNodePort ?? 8332
-  const defaultNodeHost = `${nodePackageId}.startos`
-  const nodeHost =
-    nodeAddressMode === 'custom' && customNodeHost.length > 0
-      ? customNodeHost
-      : defaultNodeHost
-  // BCHD serves RPC over native TLS (self-signed cert). ckpool-lineage has no
-  // TLS library, so BCHD exposes a stunnel plaintext proxy on port 8334 that
-  // forwards to its TLS RPC on 8332 internally. Use 8334 automatically when
-  // the selected node is bchd; everything else speaks plaintext on 8332.
-  const defaultRpcPort = nodePackageId === 'bchd' ? 8334 : 8332
-  const nodePort =
-    nodeAddressMode === 'custom' && Number.isFinite(customNodePort) && customNodePort > 0
-      ? customNodePort
-      : defaultRpcPort
-
-  const torMode = store?.torMode ?? 'off'
-  const torProxyHost = (store?.torProxyHost ?? 'tor.startos').trim() || 'tor.startos'
-  const torProxyPort = store?.torProxyPort ?? 9050
-  const torEnabled = torMode !== 'off'
-  const torProxyUrl = `socks5h://${torProxyHost}:${torProxyPort}`
-  const rpcAuthMode = store?.rpcAuthMode ?? 'auto'
-  const manualRpcUser = (store?.manualRpcUser ?? '').trim()
-  const manualRpcPassword = store?.manualRpcPassword ?? ''
-
-  // ── Mounts ───────────────────────────────────────────────────────
   const mounts = sdk.Mounts.of()
     .mountVolume({
       volumeId: 'main',
@@ -49,298 +73,248 @@ export const main = sdk.setupMain(async ({ effects }) => {
       readonly: false,
     })
     .mountDependency({
-      dependencyId: nodePackageId,
+      dependencyId: node,
       volumeId: 'main',
       subpath: null,
       mountpoint: nodeMountpoint,
       readonly: true,
-    } as any)
+    })
 
-  // ── SubContainers ────────────────────────────────────────────────
-  const poolSub = await sdk.SubContainer.of(
+  const poolSub = sdk.SubContainer.of(
     effects,
     { imageId: 'asicseer' },
     mounts,
     'pool-sub',
   )
-
-  const soloSub = await sdk.SubContainer.of(
-    effects,
-    { imageId: 'asicseer' },
-    mounts,
-    'solo-sub',
-  )
-
-  const uiSub = await sdk.SubContainer.of(
+  const uiSub = sdk.SubContainer.of(
     effects,
     { imageId: 'asicseer' },
     mounts,
     'ui-sub',
   )
 
-  // ── Read node RPC credentials from mounted dependency ────────────
-  const maxStoreReadAttempts = 15
-  let rpcUser = nodePackageId
-  let rpcPassword = ''
-  let storeReadOk = false
-  for (let attempt = 1; attempt <= maxStoreReadAttempts; attempt++) {
+  const readNodeStore = async (): Promise<NodeStore | null> => {
+    const res = await poolSub
+      .exec(['cat', `${nodeMountpoint}/store.json`])
+      .catch(() => null)
+    if (!res || res.exitCode !== 0) return null
     try {
-      const result = await poolSub.exec([
-        'cat',
-        `${nodeMountpoint}/store.json`,
-      ])
-      if (result.exitCode === 0) {
-        const nodeStore = JSON.parse(result.stdout.toString()) as {
-          rpcUser?: string
-          rpcPassword?: string
-        }
-        rpcUser = nodeStore.rpcUser ?? rpcUser
-        rpcPassword = nodeStore.rpcPassword ?? rpcPassword
-        storeReadOk = true
-        break
-      }
+      return JSON.parse(res.stdout.toString()) as NodeStore
     } catch {
-      // Retry below.
+      return null
     }
-
-    console.warn(
-      `Could not read ${nodeMountpoint}/store.json yet (attempt ${attempt}/${maxStoreReadAttempts})`,
-    )
-    await poolSub.exec(['sleep', '2'])
   }
 
-  if (!storeReadOk) {
+  const nodeStore = await readNodeStore()
+  const reported = nodeStore?.network ?? 'mainnet'
+  const network = nodeNetwork(reported)
+  if (!network) {
     throw new Error(
-      `Dependency store.json was not readable at ${nodeMountpoint}/store.json`,
+      i18n('The selected node reports an unrecognized chain: ${chain}.', {
+        chain: reported,
+      }),
     )
   }
 
-  if (!rpcPassword) {
-    console.warn('Node RPC password is empty in dependency store.json')
-  }
+  const rpcAddress = await nodeRpcBridge(effects, node, network)
 
-  if (rpcAuthMode === 'manual' && manualRpcUser && manualRpcPassword) {
-    rpcUser = manualRpcUser
-    rpcPassword = manualRpcPassword
-  }
+  // Flowee keeps only a hash of each password, so it is dialed with the
+  // credential this package minted and registered on it.
+  const rpcUser =
+    node === 'flowee'
+      ? (settings?.floweeRpcUser ?? '')
+      : (nodeStore?.rpcUser ?? node)
+  const rpcPassword =
+    node === 'flowee'
+      ? (settings?.floweeRpcPassword ?? '')
+      : (nodeStore?.rpcPassword ?? '')
 
-  console.log(
-    `RPC target=${nodeHost}:${nodePort} user=${rpcUser} passLength=${rpcPassword.length} torMode=${torMode}`,
-  )
+  const payoutAddress = settings?.payoutAddress ?? ''
+  const payoutChain = addressChain(payoutAddress)
 
-  const rpcCall = async (method: string, params: unknown[]) => {
-    const args = [
-      'curl',
-      '-sS',
-      '--fail',
-      '--max-time',
-      '5',
-      '-u',
-      `${rpcUser}:${rpcPassword}`,
-      '-H',
-      'Content-Type: application/json',
-      '-d',
-      JSON.stringify({ jsonrpc: '1.0', id: 'startos', method, params }),
-      `http://${nodeHost}:${nodePort}`,
-    ]
+  /**
+   * Mining is impossible: report it, rather than throw. A thrown `main`
+   * crash-loops under auto-restart and leaks a mount set every cycle.
+   */
+  const blocked = (message: string) =>
+    sdk.Daemons.of(effects).addHealthCheck('mining', {
+      ready: {
+        display: i18n('Mining'),
+        fn: async () => ({ result: 'failure', message }) as const,
+      },
+      requires: [],
+    })
 
-    if (torEnabled) {
-      args.splice(2, 0, '--proxy', torProxyUrl)
-    }
+  const raisePayoutTask = (reason: string) =>
+    sdk.action.createOwnTask(effects, configure, 'critical', {
+      replayId: 'payout-address',
+      reason,
+    })
 
-    return poolSub.exec(args)
-  }
-
-  const maxRpcProbeAttempts = 30
-  let rpcReady = false
-  let lastProbeFailure = ''
-  for (let attempt = 1; attempt <= maxRpcProbeAttempts; attempt++) {
-    try {
-      const infoResult = await rpcCall('getblockchaininfo', [])
-      const gbtResult = await rpcCall('getblocktemplate', [{}])
-
-      const infoBody = infoResult.stdout.toString()
-      const gbtBody = gbtResult.stdout.toString()
-      const infoOk = infoResult.exitCode === 0 && infoBody.includes('"error":null')
-      const gbtOk = gbtResult.exitCode === 0 && gbtBody.includes('"error":null')
-
-      if (infoOk && gbtOk) {
-        rpcReady = true
-        break
-      }
-
-      lastProbeFailure = `RPC returned non-success JSON (infoExit=${infoResult.exitCode}, gbtExit=${gbtResult.exitCode})`
-      if (gbtBody.includes('403') || infoBody.includes('403')) {
-        lastProbeFailure =
-          'HTTP 403 Forbidden from node RPC. Check rpcuser/rpcpassword and node RPC access controls.'
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (message.includes('403')) {
-        lastProbeFailure =
-          'HTTP 403 Forbidden from node RPC. Credentials or RPC ACL are rejecting the request.'
-      } else if (message.includes('401')) {
-        lastProbeFailure =
-          'HTTP 401 Unauthorized from node RPC. Credentials are incorrect.'
-      } else if (message.includes('timed out')) {
-        lastProbeFailure = 'RPC request timed out. Check connectivity and node health.'
-      } else if (message.includes('Failed to connect')) {
-        lastProbeFailure =
-          'Cannot connect to node RPC endpoint. Check host, port, and selected network mode.'
-      } else {
-        lastProbeFailure = message
-      }
-    }
-
-    console.warn(
-      `Node RPC probe failed at ${nodeHost}:${nodePort} (attempt ${attempt}/${maxRpcProbeAttempts}): ${lastProbeFailure}`,
+  if (!payoutAddress) {
+    const message = i18n(
+      'No payout address is set. Open Configure and set the address a found block should pay to.',
     )
-    await poolSub.exec(['sleep', '2'])
+    await raisePayoutTask(message)
+    return blocked(message)
   }
 
-  if (!rpcReady) {
-    throw new Error(
-      `Node RPC at ${nodeHost}:${nodePort} did not become ready: ${lastProbeFailure}`,
+  if (payoutChain && payoutChain !== networkChain(network)) {
+    const message = i18n(
+      'The payout address does not belong to the chain the node is on (${chain}). Open Configure and set an address starting ${prefix}',
+      { chain: network, prefix: addressPrefix[networkChain(network)] },
+    )
+    await raisePayoutTask(message)
+    return blocked(message)
+  }
+
+  await sdk.action.clearTask(effects, 'payout-address')
+
+  if (!rpcAddress) {
+    return blocked(
+      i18n(
+        'The ${node} node is not reachable. The pool will start once it is installed and running.',
+        { node },
+      ),
     )
   }
 
-  await storeJson.merge(effects, {
-    nodeRpcUser: rpcUser,
-    nodeRpcPassword: rpcPassword,
+  // The pool reloads its totals from `{logdir}/pool/pool.status` on start, so
+  // they have to go before the daemons launch. A chain change wipes them too:
+  // shares counted against one chain's difficulty mean nothing on another.
+  const flags = await storeJson.read().once()
+  if (
+    flags?.wipePending ||
+    (flags?.lastNetwork && flags.lastNetwork !== network)
+  ) {
+    console.info(
+      i18n('Clearing mining statistics (chain is now ${chain})', {
+        chain: network,
+      }),
+    )
+    await poolSub.exec(['sh', '-c', `rm -rf ${rootDir}/pool/log/*`])
+  }
+  await storeJson.merge(effects, { wipePending: false, lastNetwork: network })
+
+  await asicseerConf.write(effects, {
+    btcd: [{ url: rpcAddress, auth: rpcUser, pass: rpcPassword, notify: true }],
+    bchaddress: payoutAddress,
+    bchsig: `/${settings?.poolIdentifier ?? 'ASICSeer'}/`,
+    blockpoll: 100,
+    update_interval: 30,
+    serverurl: [`0.0.0.0:${poolPort}`],
+    mindiff: 1,
+    startdiff: settings?.poolDifficulty ?? 42,
+    // 0 is upstream's default: no cap, vardiff follows the hardware.
+    maxdiff: 0,
+    logdir: `${rootDir}/pool/log`,
+    pool_fee: settings?.poolFee ?? 1,
+    ...(settings?.disableDevDonation ? { disable_dev_donation: true } : {}),
   })
 
-  // ── Write ckpool config files ────────────────────────────────────
-  // asicseer-pool requires pool_fee to be a JSON float (e.g. 1.0 not 1)
-  const ensureFloat = (s: string) =>
-    s.replace(/"pool_fee":\s*(\d+)(?!\.)/g, '"pool_fee": $1.0')
+  /**
+   * asicseer-pool holds the stratum port open while unable to get a block
+   * template, so a bare port check would report a pool that mines nothing.
+   */
+  const miningReady = async () => {
+    const log = await poolSub
+      .exec(['sh', '-c', `tail -n 20 ${rootDir}/pool/log/*.log 2>/dev/null`])
+      .then((r) => r.stdout?.toString() ?? '')
+      .catch(() => '')
 
-  const poolConf = ensureFloat(
-    JSON.stringify(
-      {
-        btcd: [
-          {
-            url: `${nodeHost}:${nodePort}`,
-            auth: rpcUser,
-            pass: rpcPassword,
-            notify: true,
-          },
-        ],
-        bchaddress: payoutAddress || '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
-        bchsig: `/${poolIdentifier}/`,
-        blockpoll: 100,
-        update_interval: 30,
-        serverurl: [`0.0.0.0:${poolPort}`],
-        mindiff: 1,
-        startdiff: poolDifficulty,
-        maxdiff: 0,
-        logdir: `${rootDir}/pool/log`,
-        pool_fee: poolFee,
-        ...(disableDevDonation ? { disable_dev_donation: true } : {}),
-      },
-      null,
-      2,
-    ),
-  )
+    if (/invalid b(tc|ch)address/i.test(log)) {
+      return {
+        result: 'failure',
+        message: i18n(
+          'The node rejected the payout address. Open Configure and set one valid on ${chain}.',
+          { chain: network },
+        ),
+      } as const
+    }
+    if (/No bitcoinds active/i.test(log)) {
+      return {
+        result: 'failure',
+        message: i18n(
+          'The node is not answering, so there is no work to mine.',
+        ),
+      } as const
+    }
 
-  const soloConf = ensureFloat(
-    JSON.stringify(
-      {
-        btcd: [
-          {
-            url: `${nodeHost}:${nodePort}`,
-            auth: rpcUser,
-            pass: rpcPassword,
-            notify: true,
-          },
-        ],
-        bchaddress: payoutAddress || '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
-        bchsig: `/${poolIdentifier}-solo/`,
-        blockpoll: 100,
-        update_interval: 30,
-        serverurl: [`0.0.0.0:${soloPort}`],
-        mindiff: 1,
-        startdiff: poolDifficulty,
-        maxdiff: 0,
-        logdir: `${rootDir}/solo/log`,
-        pool_fee: 0,
-        ...(disableDevDonation ? { disable_dev_donation: true } : {}),
-      },
-      null,
-      2,
-    ),
-  )
+    return sdk.healthCheck.checkPortListening(effects, poolPort, {
+      successMessage: i18n('Accepting miners on ${chain}', { chain: network }),
+      errorMessage: i18n('Starting...'),
+    })
+  }
 
-  await poolSub.exec([
-    'sh',
-    '-c',
-    `mkdir -p ${rootDir}/pool/log && cat > ${rootDir}/pool/asicseer.conf << 'EOCONF'\n${poolConf}\nEOCONF`,
-  ])
-
-  await poolSub.exec([
-    'sh',
-    '-c',
-    `mkdir -p ${rootDir}/solo/log && cat > ${rootDir}/solo/asicseer.conf << 'EOCONF'\n${soloConf}\nEOCONF`,
-  ])
-
-  const proxyPrefix = torEnabled
-    ? `export ALL_PROXY='${torProxyUrl}' HTTP_PROXY='${torProxyUrl}' HTTPS_PROXY='${torProxyUrl}'; `
-    : ''
-
-  // ── Daemons ──────────────────────────────────────────────────────
   return sdk.Daemons.of(effects)
     .addDaemon('pool', {
       subcontainer: poolSub,
       exec: {
-        command: [
-          'sh',
-          '-c',
-          `${proxyPrefix}exec pool-entrypoint.sh pool ${rootDir}/pool/asicseer.conf`,
-        ],
+        command: ['pool-entrypoint.sh', `${rootDir}/pool/asicseer.conf`],
         sigtermTimeout: 30_000,
       },
-      ready: {
-        display: 'Pool Mining',
-        fn: async () =>
-          sdk.healthCheck.checkPortListening(effects, poolPort, {
-            successMessage: `Pool mining stratum ready on port ${poolPort}`,
-            errorMessage: 'Pool mining stratum starting...',
-          }),
-      },
-      requires: [],
-    })
-    .addDaemon('solo', {
-      subcontainer: soloSub,
-      exec: {
-        command: [
-          'sh',
-          '-c',
-          `${proxyPrefix}exec pool-entrypoint.sh solo ${rootDir}/solo/asicseer.conf`,
-        ],
-        sigtermTimeout: 30_000,
-      },
-      ready: {
-        display: 'Solo Mining',
-        fn: async () =>
-          sdk.healthCheck.checkPortListening(effects, soloPort, {
-            successMessage: `Solo mining stratum ready on port ${soloPort}`,
-            errorMessage: 'Solo mining stratum starting...',
-          }),
-      },
+      ready: { display: i18n('Mining'), fn: miningReady },
       requires: [],
     })
     .addDaemon('ui', {
       subcontainer: uiSub,
-      exec: {
-        command: ['ui-entrypoint.sh'],
-        sigtermTimeout: 10_000,
-      },
+      exec: { command: ['ui-entrypoint.sh'], sigtermTimeout: 10_000 },
       ready: {
-        display: 'Web UI',
-        fn: async () =>
+        display: i18n('Web Dashboard'),
+        fn: () =>
           sdk.healthCheck.checkPortListening(effects, uiPort, {
-            successMessage: 'Web dashboard is ready',
-            errorMessage: 'Web dashboard starting...',
+            successMessage: i18n('The dashboard is ready'),
+            errorMessage: i18n('The dashboard is not ready'),
           }),
+      },
+      requires: [],
+    })
+    .addHealthCheck('node-status', {
+      ready: {
+        display: i18n('Node'),
+        fn: async () => {
+          // The node's chain is a file, not a reactive source, so a change is
+          // noticed here — for every node, BCHN included: the binding it moves
+          // off a chain is left disabled, and a disabled binding still
+          // resolves, so the bridge read never goes null.
+          const current = await readNodeStore()
+          const moved = current?.network && nodeNetwork(current.network)
+          if (moved && moved !== network) {
+            console.info(
+              i18n('The node switched from ${from} to ${to}. Restarting.', {
+                from: network,
+                to: moved,
+              }),
+            )
+            await effects.restart()
+            return { result: 'loading', message: null } as const
+          }
+
+          if (!current) {
+            return {
+              result: 'failure',
+              message: i18n(
+                'The node is not answering, so there is no work to mine.',
+              ),
+            } as const
+          }
+
+          // A block found on a stale tip would be orphaned. Reported, not
+          // enforced: the dashboard and miners stay usable.
+          if (current.fullySynced === false) {
+            return {
+              result: 'loading',
+              message: i18n(
+                'The node is still syncing. Blocks found before it catches up would be rejected by the network.',
+              ),
+            } as const
+          }
+
+          return {
+            result: 'success',
+            message: i18n('Mining on ${chain}', { chain: network }),
+          } as const
+        },
       },
       requires: [],
     })

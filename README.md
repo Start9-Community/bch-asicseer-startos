@@ -2,309 +2,185 @@
   <img src="icon.svg" alt="ASICSeer Logo" width="21%">
 </p>
 
-# ASICSeer for StartOS
-
-> **⚠ BCHD Patched Build**
-> The pool binary (`asicseer-pool`) shipped in this package is **patched for compatibility with [BCHD](https://github.com/gcash/bchd)**. Standard asicseer-pool does not support BCHD's JSON-RPC dialect. Do not replace this binary with an unpatched upstream build.
-
-<p align="center">
-  <img src="https://img.shields.io/badge/platform-StartOS-brightgreen" alt="StartOS">
-  <img src="https://img.shields.io/badge/architecture-x86__64%20%7C%20aarch64-blue" alt="Architecture">
-  <img src="https://img.shields.io/badge/license-GPL--3.0-orange" alt="License">
-</p>
-
-**ASICSeer** is a Bitcoin Cash mining pool for [StartOS](https://start9.com), powered by [ASICSeer Pool](https://github.com/cculianu/asicseer-pool) — fast, C-based, multithreaded mining pool software for Bitcoin Cash. It provides **dual-mode** operation — pool mining and solo mining — with a built-in web dashboard.
-
-## Features
-
-- **Pool Mining** (port 3334) — Shared block rewards among all miners
-- **Solo Mining** (port 4568) — Winner takes the entire block reward
-- **Web Dashboard** (port 81) — Real-time hashrate, workers, blocks found
-- **Stratum Protocol** — Compatible with all ASIC miners (Antminer, Whatsminer, Bitaxe, etc.)
-- **Auto-configured** — Automatically connects to your Bitcoin Cash Node (BCHN or Knuth)
-- **Multi-architecture** — Runs on x86_64 and aarch64
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  ASICSeer Package                     │
-│                                                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │
-│  │  Pool daemon  │  │  Solo daemon  │  │  Web UI    │ │
-│  │  :3334       │  │  :4568       │  │  :81       │ │
-│  │  (shared)    │  │  (solo)      │  │  (nginx)   │ │
-│  └──────┬───────┘  └──────┬───────┘  └─────┬──────┘ │
-│         │                 │                │         │
-│         └────────┬────────┘                │         │
-│                  │                         │         │
-│         ┌───────▼────────┐     ┌──────────▼───────┐ │
-│         │  /data volume  │     │  stats-api.sh    │ │
-│         │  (asicseer)    │◄────│  (logs → JSON)   │ │
-│         └───────┬────────┘     └──────────────────┘ │
-│                 │                                    │
-└─────────────────┼────────────────────────────────────┘
-                  │ RPC (8332)
-         ┌────────▼────────┐
-         │  Bitcoin Cash   │
-         │  Node (BCHN     │
-         │  or Knuth)      │
-         └─────────────────┘
-```
-
-## Dependencies
-
-| Package | Required | Notes |
-|---------|----------|-------|
-| **Bitcoin Cash Node** | Yes | BCHN or Knuth flavor. Must be fully synced with txindex enabled. |
-
-## Quick Start
-
-1. **Install Bitcoin Cash Node** on your StartOS server and wait for full sync
-2. **Install ASICSeer** from the marketplace
-3. **Configure** — Set your BCH payout address via Actions → Configure
-4. **Point your miners** at:
-   - Pool mode: `stratum+tcp://<your-server>:3334`
-   - Solo mode: `stratum+tcp://<your-server>:4568`
-5. **Monitor** via the Web Dashboard
-
-### Miner Configuration
-
-| Setting | Value |
-|---------|-------|
-| **URL** | `stratum+tcp://<host>:3334` (pool) or `:4568` (solo) |
-| **Username** | Your BCH address |
-| **Password** | Anything (or `d=DIFFICULTY` for custom difficulty) |
-
-### Tor / Onion Mining (optional)
-
-Every stratum binding can be exposed over **Tor** so remote miners connect over the Tor network without touching your LAN.
-
-1. Open StartOS → **ASICSeer** → **Interfaces**.
-2. For `Pool Mining`, `Solo Mining`, or `Web Dashboard`: tap **Add**, choose **Tor**.
-3. StartOS generates a `.onion` address automatically. Point your Tor-aware miner at:
-   ```
-   stratum+tcp://<xxxx>.onion:3334   # pool
-   stratum+tcp://<xxxx>.onion:4568   # solo
-   ```
-4. Re-run `setup-vm-forwarding.sh` — it will auto-detect the enabled `.onion` URLs and print/save them alongside your LAN URLs.
-
-The onion keys survive StartOS reboots and are preserved by the standard StartOS backup system.
-
-### Dashboard Metrics — What the Numbers Mean
-
-- **Accepted** — integer count of accepted share submissions — equivalent to what your ASIC's own cgminer API reports as `Accepted` (e.g. Avalon's `Accepted: 6`). Because asicseer-pool stores only a diff-weighted sum per-worker (`worker->shares += diff`), we derive the count by dividing that sum by the worker's current vardiff (`client->diff`). The vardiff is read live from asicseer-pool's Unix control socket by a helper loop in the pool subcontainer (see `assets/pool-entrypoint.sh`) and staged at `/data/{mode}/log/clients.json` for the UI subcontainer.
-- **Rejected** — integer count of rejected share submissions, aggregated from asicseer-pool's own per-share JSONL sharelog at `/data/{mode}/log/{blockheight}/*.sharelog`. Every share submission — accepted or rejected — is written as one line with fields including `workername`, `result` (`true`/`false`), and `reject-reason`. We group by `workername` and count `result: false` entries. Scan is bounded to the 500 most-recently-modified sharelog files so long-running pools stay fast.
-- **Shares (Σdiff)** — the same accepted shares viewed as diff-1–weighted WORK (e.g. `182.00 M`). Useful for comparing contribution across workers with different vardiff targets.
-- **Best Share** — highest individual share difficulty ever submitted by this worker. When Best Share approaches network difficulty (~355 EH on BCH right now), a block is about to be found.
-- **Last Share** / **Status** — Status is derived from the pool's `lastshare` unix timestamp (authoritative, updated on every accepted share): under 5 min = Alive, under 1 h = Idle, older = Dead. Hashrate averages are only used as a last-resort fallback when `lastshare` is missing, so the badge cannot get stuck at "Alive" after a miner goes dark.
-- **Found Blocks** (main card) — counted directly from files in `/data/pool/log/pool/blocks/` (asicseer-pool writes one file per solved block). A true integer count, not derived from share work.
-
-## Running StartOS in a Virtual Machine
-
-If you run StartOS inside a **libvirt/KVM virtual machine** (e.g. via `virt-manager`), miners on your local network cannot reach the VM directly because libvirt uses a NAT bridge (`virbr0`). You need to forward the mining ports from your host machine to the VM.
-
-This works with **any connection type** — wired (Ethernet), wireless (WiFi), or both simultaneously.
-
-### One-Command Setup (Linux)
-
-Download and run the setup script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BitcoinCash1/bch-asicseer-startos/master/scripts/setup-vm-forwarding.sh -o setup-vm-forwarding.sh
-chmod +x setup-vm-forwarding.sh
-sudo ./setup-vm-forwarding.sh
-```
-
-That's it. The script will:
-
-1. Auto-detect your StartOS VM and its IP address
-2. Pin the VM's IP so it doesn't change on reboot (static DHCP lease)
-3. Install a [libvirt qemu hook](https://wiki.libvirt.org/Networking.html#forwarding-incoming-connections) that automatically forwards ports whenever the VM starts
-4. Detect **all** your physical network interfaces (wired + wireless) and forward on each
-5. Print the exact stratum URLs to use for your miners
-6. Best-effort: detect any `.onion` addresses you have enabled for the pool and print those too (see [Tor / Onion Mining](#tor--onion-mining-optional))
-
-The rules **persist across host reboots automatically** — the hook is invoked by libvirt every time the VM starts, so there is no cron job or systemd unit to maintain.
-
-```
-$ sudo ./setup-vm-forwarding.sh
-[OK] Found VM: Start9OS
-[OK] VM IP: 192.168.122.129
-[OK]   eno1 (192.168.0.55)          ← wired
-[OK]   wlp4s0 (192.168.0.156)      ← wireless
-[OK] Hook installed at /etc/libvirt/hooks/qemu
-[OK] Forwarding rules active
-
-  Miner configuration — use ANY of these addresses:
-
-    via eno1 (192.168.0.55):
-      ASICSeer:       stratum+tcp://192.168.0.55:3334
-      ASICSeer Solo:  stratum+tcp://192.168.0.55:4568
-
-    via wlp4s0 (192.168.0.156):
-      ASICSeer:       stratum+tcp://192.168.0.156:3334
-      ASICSeer Solo:  stratum+tcp://192.168.0.156:4568
-```
-
-### Management Commands
-
-```bash
-# Check current status
-sudo ./setup-vm-forwarding.sh --status
-
-# Completely remove (restores system to default)
-sudo ./setup-vm-forwarding.sh --remove
-
-# Specify VM name manually (if auto-detect fails)
-sudo ./setup-vm-forwarding.sh "My StartOS VM"
-```
-
-### How It Works
-
-The script installs `/etc/libvirt/hooks/qemu` — the [official libvirt hook mechanism](https://wiki.libvirt.org/Networking.html#forwarding-incoming-connections). When the VM starts, the hook adds `iptables` DNAT rules that forward incoming connections on ports 3334, 4568, and 81 from every physical network interface to the VM. When the VM stops, the rules are automatically removed.
-
-```
-┌─────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│   Miner     │────▶│  Host Machine    │────▶│  StartOS VM      │
-│ 192.168.0.x │     │  eno1/wlp4s0     │     │  192.168.122.x   │
-│             │     │  (iptables DNAT) │     │  (virbr0 NAT)    │
-└─────────────┘     └──────────────────┘     └──────────────────┘
-  stratum+tcp://       port forwarding          asicseer listening
-  192.168.0.55:3334    3334 → VM:3334           on :3334
-```
-
-No bridges, NetworkManager changes, or DNS changes. Just iptables rules managed by the official libvirt hook system.
-
-### One-Command Setup (Windows)
-
-Supports **VirtualBox** and **Hyper-V**. Open PowerShell **as Administrator** and run:
-
-```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/BitcoinCash1/bch-asicseer-startos/master/scripts/setup-vm-forwarding.ps1" -OutFile setup-vm-forwarding.ps1
-.\setup-vm-forwarding.ps1
-```
-
-The script will auto-detect your VM and hypervisor, set up port forwarding, save a `Miner-Connection-Info.txt` to your Desktop, and open a copyable popup with your stratum URLs.
-
-```powershell
-# Management
-.\setup-vm-forwarding.ps1 -Status       # show current state
-.\setup-vm-forwarding.ps1 -Remove       # uninstall everything
-.\setup-vm-forwarding.ps1 -VMName "My VM"  # specify VM name
-```
-
-### One-Command Setup (macOS)
-
-Supports **VirtualBox** and **UTM**. Open Terminal and run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BitcoinCash1/bch-asicseer-startos/master/scripts/setup-vm-forwarding-mac.sh -o setup-vm-forwarding-mac.sh
-chmod +x setup-vm-forwarding-mac.sh
-sudo ./setup-vm-forwarding-mac.sh
-```
-
-Same features: auto-detect, Desktop txt file, popup with Copy to Clipboard button.
-
-```bash
-sudo ./setup-vm-forwarding-mac.sh --status    # show current state
-sudo ./setup-vm-forwarding-mac.sh --remove    # uninstall everything
-```
-
-> **Tip (all platforms):** If you use **Bridged Networking** instead of NAT, the VM gets its own LAN IP and miners can connect directly — no port forwarding script needed.
-
-### Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Script says "VM not found" | Run `virsh list --all` to see VM names, then pass it: `sudo ./setup-vm-forwarding.sh "exact name"` |
-| Script says "Cannot determine VM IP" | Start the VM first, wait 30 seconds for it to get an IP, then run again |
-| Miner connects but pool shows no hashrate | Check that the pool service is running on StartOS (Actions → Start) |
-| Port forwarding stops after reboot | The hook should auto-apply when the VM starts. Run `sudo ./setup-vm-forwarding.sh --status` to verify the hook file exists |
-| Want to undo everything | `sudo ./setup-vm-forwarding.sh --remove` restores your system completely |
-| Windows: "execution policy" error | Run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first |
-| macOS: VBox rules need VM stopped | Shut down the VM, run the script, then start the VM |
-| macOS UTM: need guest IP | Find it inside StartOS (System → Network) and enter when prompted |
-
-## Building from Source
-
-```bash
-# Prerequisites: StartOS SDK, Docker, Node.js 20+
-git clone https://github.com/BitcoinCash1/bch-asicseer-startos.git
-cd bch-asicseer-startos
-npm install
-make
-```
-
-## Port Allocation
-
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 3334 | Stratum (TCP) | Pool mining |
-| 4568 | Stratum (TCP) | Solo mining |
-| 81 | HTTP | Web dashboard |
-
-## Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| Payout Address | *(required)* | BCH address for coinbase rewards |
-| Pool Fee | 1% | Fee percentage for pool mode (solo is always 0%) |
-| Pool Identifier | `ASICSeer` | Coinbase signature visible on block explorers |
-| Starting Difficulty | 64 | Initial share difficulty for new workers |
-
-## How It Works
-
-ASICSeer runs two independent mining daemon instances from the same Docker image:
-- **Pool instance** shares rewards proportionally based on submitted shares
-- **Solo instance** directs the entire block reward to whichever miner finds it
-
-Both instances connect to your Bitcoin Cash Node via RPC. The web dashboard reads ASICSeer's log files directly and serves stats as static JSON via nginx.
-
-You can point different miners to different modes simultaneously — no reconfiguration needed.
-
-## EloPool vs ASICSeer
-
-Both packages are ckpool forks with the same dual-mode architecture. They use **different ports** so you can run both simultaneously:
-
-| Feature | EloPool | ASICSeer |
-|---------|---------|----------|
-| Pool Port | 3333 | 3334 |
-| Solo Port | 4567 | 4568 |
-| Web UI Port | 80 | 81 |
-| Upstream | [skaisser/ckpool](https://github.com/skaisser/ckpool) | [cculianu/asicseer-pool](https://github.com/cculianu/asicseer-pool) |
-
-## Upstream
-
-- [cculianu/asicseer-pool](https://github.com/cculianu/asicseer-pool) — Fast, C-based, multithreaded mining pool software for Bitcoin Cash
-- [bitcoin-cash-node](https://github.com/bitcoin-cash-node/bitcoin-cash-node) — Bitcoin Cash full node
-
-## License
-
-GPL-3.0 — matches upstream ASICSeer Pool license.
+# ASICSeer on StartOS
+
+> **Upstream docs:** <https://github.com/cculianu/asicseer-pool>
+>
+> Everything not listed in this document should behave the same as upstream
+> asicseer-pool. If a feature, setting, or behavior is not mentioned here, the
+> upstream documentation is accurate and fully applicable.
+
+[asicseer-pool](https://github.com/cculianu/asicseer-pool) is a Bitcoin Cash mining pool server, a fork of ckpool. This package runs it against a Bitcoin Cash full node installed on the same StartOS server, and adds a web dashboard for monitoring it.
 
 ---
 
-<details>
-<summary><strong>AI Reference Prompt</strong></summary>
+## Table of Contents
+
+- [Image and Container Runtime](#image-and-container-runtime)
+- [Volume and Data Layout](#volume-and-data-layout)
+- [Installation and First-Run Flow](#installation-and-first-run-flow)
+- [Configuration Management](#configuration-management)
+- [Network Access and Interfaces](#network-access-and-interfaces)
+- [Actions (StartOS UI)](#actions-startos-ui)
+- [Backups and Restore](#backups-and-restore)
+- [Health Checks](#health-checks)
+- [Dependencies](#dependencies)
+- [Limitations and Differences](#limitations-and-differences)
+- [What Is Unchanged from Upstream](#what-is-unchanged-from-upstream)
+- [Contributing](#contributing)
+- [Quick Reference for AI Consumers](#quick-reference-for-ai-consumers)
+
+---
+
+## Image and Container Runtime
+
+One image, `asicseer`, built from the package `Dockerfile`. There is no upstream image: the first stage clones `cculianu/asicseer-pool` at the tag pinned in `ASICSEER_REF` and builds it with CMake; the runtime stage is `node:20-bookworm-slim` with nginx, curl and jq added.
+
+Architectures: `x86_64` and `aarch64`, each built natively.
+
+`patches/apply.py` runs against the upstream source before it is compiled. Upstream targets Bitcoin Cash Node, and each patch fixes something that is otherwise silently broken against one of the other two nodes — a JSON-RPC request with no `id` member (rejected by BCHD), HTTP headers arriving in an order the pool's reader does not expect (BCHD again), and `validateaddress` responses from a node with no wallet or with legacy-only address parsing (BCHD and Flowee). Every patch asserts its expected hit count, so an upstream bump that moves one of these lines fails the image build rather than producing a pool that cannot mine.
+
+Two daemons share the one image:
+
+| Daemon | Subcontainer | Command                          | Purpose              |
+| ------ | ------------ | -------------------------------- | -------------------- |
+| `pool` | `pool-sub`   | `pool-entrypoint.sh <conf>`      | Stratum pool server  |
+| `ui`   | `ui-sub`     | `ui-entrypoint.sh`               | nginx + stats writer |
+
+`pool-entrypoint.sh` wraps the pool binary rather than replacing it: it restarts the daemon if it exits abnormally, pre-creates the sharelog directory for the next few block heights (upstream only creates it when it sees a new block, so shares submitted in between are dropped from the only per-worker record that is persisted), and stages the live client table to the shared volume so the dashboard can derive a per-worker submission count.
+
+## Volume and Data Layout
+
+One volume, `main`, mounted at `/data` in both subcontainers.
+
+| Path                         | Contents                                                        |
+| ---------------------------- | --------------------------------------------------------------- |
+| `/data/store.json`           | StartOS-side settings — node choice, payout address, pool params |
+| `/data/pool/asicseer.conf`   | Generated pool config, rewritten on every start                 |
+| `/data/pool/log/`            | Pool status, sharelogs, per-user files — the mining statistics   |
+
+The selected node's own `main` volume is mounted read-only at `/mnt/node`. Nothing reads chain data from it; it is there so `main` can read the node's `store.json` for the chain it is on and, on Bitcoin Cash Node and Bitcoin Cash Daemon, its RPC credentials.
+
+## Installation and First-Run Flow
+
+Two critical tasks are raised on install: **Select Node Backend** and **Configure**. The pool cannot mine without both — an unset payout address means a found block would pay nowhere.
+
+`main` refuses to start the mining daemon and reports a single failing **Mining** health check when the payout address is missing, belongs to a different chain than the node is on, or the node's RPC is not reachable. It does not throw: a thrown `setupMain` crash-loops the service under auto-restart and leaks a subcontainer mount set on every cycle.
+
+Choosing Flowee the Hub additionally raises a task on Flowee. Flowee stores only a hash of each RPC password and cannot hand one back, so this package mints a credential on first init and registers it there through Flowee's own `create-dependent-credential` action.
+
+## Configuration Management
+
+| StartOS-Managed                                                               | Upstream-Managed                          |
+| ----------------------------------------------------------------------------- | ----------------------------------------- |
+| `asicseer.conf` in full — RPC target and credentials, payout address, pool signature, stratum port, log directory, fee, starting difficulty | Nothing — the config file is regenerated on every start and hand edits are lost |
+
+The settings a user can change are the five inputs of the **Configure** action plus the node choice in **Select Node Backend**. Everything else in the generated config is fixed at upstream's defaults.
+
+`pool_fee` is written with a decimal point even when whole. The pool reads it through jansson's `json_is_real`, which is false for an integer, so `"pool_fee": 0` would be discarded in favour of the built-in 1% default — a pool configured to take nothing would take one percent.
+
+## Network Access and Interfaces
+
+| Interface     | Id            | Internal port | Protocol | Type  | Purpose           |
+| ------------- | ------------- | ------------- | -------- | ----- | ----------------- |
+| Pool Mining   | `pool-mining` | 3334          | raw TCP  | `p2p` | Stratum endpoint  |
+| Web Dashboard | `web-ui`      | 81            | HTTP     | `ui`  | Mining statistics |
+
+The stratum interface carries a `schemeOverride` of `stratum+tcp`, so the addresses StartOS shows are in the form a miner accepts. Stratum is unencrypted — mining hardware does not speak TLS — so it binds with `secure: { ssl: false }`.
+
+Where each interface is reachable is the user's choice, made in StartOS.
+
+## Actions (StartOS UI)
+
+| Name                | Id                  | Visibility | Availability | Inputs                                                                        | Outputs                    |
+| ------------------- | ------------------- | ---------- | ------------ | ----------------------------------------------------------------------------- | -------------------------- |
+| Connection Info     | `connection-info`   | enabled    | only running | none                                                                          | Stratum URL, username and password format |
+| Configure           | `configure`         | enabled    | any          | Payout address, pool fee, pool identifier, starting difficulty, dev-donation toggle | none                       |
+| Select Node Backend | `select-node`       | enabled    | any          | Node package                                                                  | none                       |
+| Wipe Mining State   | `wipe-mining-state` | enabled    | any          | none                                                                          | none                       |
+
+**Configure** and **Select Node Backend** write `store.json`, which `main` reads through a mapped `.const()` — the write is what restarts the pool onto the new settings.
+
+**Wipe Mining State** sets a flag and restarts. The deletion happens in `main` before the daemons launch, because the pool reloads its accumulated totals from `{logdir}/pool/pool.status` on every start; deleting them while it is running would simply write them back. `main` performs the same wipe unprompted when the node's chain has changed since the last start, since shares counted against one chain's difficulty mean nothing on another.
+
+## Backups and Restore
+
+The `main` volume in full, which is the settings and the mining statistics. Restoring returns the pool to the settings and statistics of the backup; connected miners reconnect on their own.
+
+## Health Checks
+
+| Check         | Display       | What it reports                                                                                    |
+| ------------- | ------------- | -------------------------------------------------------------------------------------------------- |
+| `pool` daemon | Mining        | The last lines of the pool's log first — a rejected payout address or an unreachable node fail here — then that the stratum port is listening |
+| `ui` daemon   | Web Dashboard | Port 81 listening                                                                                  |
+| `node-status` | Node          | Re-reads the node's `store.json`: restarts the service if the node changed chain, fails if it is unreadable, loads while the node is still syncing |
+| `mining`      | Mining        | Replaces all of the above when the pool cannot run at all — no payout address, wrong-chain address, or no reachable node |
+
+The log check exists because the pool holds the stratum port open while unable to build work, so a bare port check reports a healthy pool that mines nothing.
+
+`node-status` is where a chain change is noticed, for every node. Bitcoin Cash Node does move its RPC port with the chain, but the binding it moves off is left *disabled* rather than removed, and a disabled binding still resolves to its old address — so the bridge address `main` watches does not go null and would not re-run `main` on its own.
+
+## Dependencies
+
+Exactly one node is needed at a time — whichever **Select Node Backend** has chosen — so all three are declared optional.
+
+| Dependency          | Package id     | Health check     | Mounted             | Purpose                                    |
+| ------------------- | -------------- | ---------------- | ------------------- | ------------------------------------------ |
+| Bitcoin Cash Node   | `bitcoincashd` | `primary`        | `main` → `/mnt/node` (ro) | Block templates over JSON-RPC        |
+| Bitcoin Cash Daemon | `bchd`         | `rpc-plaintext`  | `main` → `/mnt/node` (ro) | The same, dialed through BCHD's plaintext proxy so no certificate has to be trusted |
+| Flowee the Hub      | `flowee`       | `primary`        | `main` → `/mnt/node` (ro) | The same, with a credential this package registers on it |
+
+The dependency is gated on the node being up, not on it being synced — a pool that refused to start until a fresh chain had synced would be unusable for days. Sync state is reported by the `node-status` health check instead.
+
+No autoconfig task is raised on Bitcoin Cash Node or Bitcoin Cash Daemon. The pool calls only `getblocktemplate`, `submitblock`, `validateaddress`, `getrawtransaction` and the chain-info reads, none of which need a transaction index or an unpruned chain.
+
+## Limitations and Differences
+
+1. **There is no solo-mining mode.** upstream asicseer-pool has none — no `-B`/`btcsolo` flag, and the word does not appear in its source. It always pays every block's miners directly and proportionally in the coinbase. An earlier revision of this package ran a second daemon labelled "Solo Mining"; it was a second copy of the same proportional pool with a zero fee, and it has been removed. EloPool, whose upstream is Con Kolivas' ckpool, does have real solo mining.
+2. **Knuth is not supported.** It serves mining templates through `getblocktemplatelight` / `submitblocklight`; this pool speaks classic `getblocktemplate` only.
+3. **The config file is regenerated on every start.** Any hand edit to `/data/pool/asicseer.conf` is overwritten.
+4. **Only a subset of upstream's configuration is exposed.** `mindiff_overrides`, multiple `serverurl` entries, `bchsig` rotation, ZMQ block notification and node/proxy/redirector modes are all left at upstream defaults and are not settable.
+5. **The node must be on the same StartOS server.** There is no option to point the pool at a remote node.
+6. **The dashboard's suggested stratum URL uses the pool's internal port.** Use the **Connection Info** action for the address StartOS actually assigned.
+
+## What Is Unchanged from Upstream
+
+- The stratum v1 protocol, vardiff behavior, and share accounting.
+- Coinbase payout: each block is split between the miners that worked on it, paid to the addresses they connected with, minus the pool fee and the developer donation.
+- The username-as-payout-address convention, including the `address.workername` suffix.
+- The developer donation, which is a tenth of the pool fee and is on unless disabled.
+- The on-disk log layout the pool writes: `pool.status`, the per-user files, and the per-height sharelog directories.
+
+## Contributing
+
+See [AGENTS.md](./AGENTS.md).
+
+---
+
+## Quick Reference for AI Consumers
 
 ```yaml
-package: bch-asicseer
-type: startos-service
-sdk: "@start9labs/start-sdk@1.0.0"
-upstream: cculianu/asicseer-pool
-depends_on: bitcoincashd (BCHN or Knuth flavor)
+package_id: bch-asicseer
+architectures: [x86_64, aarch64]
+volumes:
+  main: /data
+mounted_dependency_volumes:
+  '<selected node>:main': /mnt/node (read-only)
 ports:
-  pool: 3334 (stratum)
-  solo: 4568 (stratum)
-  ui: 81 (http)
-daemons: 3 (pool-asicseer, solo-asicseer, ui-nginx)
-volumes: main (/data)
-dependency_mount: /mnt/bitcoincashd (reads store.json for RPC creds)
-critical_tasks: txindex=true, prune=null, zmqEnabled=true
-config_fields: payoutAddress, poolFee, poolIdentifier, poolDifficulty
-webui: nginx serving static HTML + stats-api.sh background (logs → JSON)
-build: multi-stage Docker (ubuntu build-asicseer → node:20-bookworm-slim runtime)
+  pool-mining: 3334
+  web-ui: 81
+dependencies: [bitcoincashd, bchd, flowee] # all optional; exactly one selected
+startos_managed_env_vars: []
+startos_managed_files:
+  - /data/pool/asicseer.conf
+  - /data/store.json
+actions:
+  - connection-info
+  - configure
+  - select-node
+  - wipe-mining-state
+health_checks:
+  - pool
+  - ui
+  - node-status
 ```
-
-</details>

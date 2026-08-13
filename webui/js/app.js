@@ -199,9 +199,17 @@
     var stats = (data && data.stats) || {}
     var connected = getConnectedCount(data)
 
-    el(prefix + '-hashrate').textContent = formatHashrate(
-      stats.hashrate1hr || stats.hashrate5m || stats.hashrate1m || stats.hashrate
-    )
+    // Headline hashrate uses the current windows (1hr/5m/1m). When the pool is
+    // reporting but has no active miners every window is 0, so default to 0 and
+    // show "0 H/s" rather than letting the || chain fall through to undefined
+    // (which rendered a bare "—"). Only show "—" when there is no stats object
+    // at all (pool API down / starting).
+    var hasStats = !!(data && data.stats)
+    var headlineHr =
+      stats.hashrate1hr || stats.hashrate5m || stats.hashrate1m || 0
+    el(prefix + '-hashrate').textContent = hasStats
+      ? formatHashrate(headlineHr)
+      : '—'
     el(prefix + '-workers').textContent = formatNumber(connected)
     // FIX: don't fall back to stats.accepted here — that field is cumulative
     // diff-1 share WORK (hundreds of millions), not a block count. Using it as
@@ -235,6 +243,19 @@
     }
   }
 
+  function networkLabel(chain) {
+    var k = String(chain || '').toLowerCase()
+    var map = {
+      main: 'Mainnet', mainnet: 'Mainnet',
+      test: 'Testnet3', test3: 'Testnet3', testnet3: 'Testnet3',
+      test4: 'Testnet4', testnet4: 'Testnet4',
+      chip: 'Chipnet', chipnet: 'Chipnet',
+      scale: 'Scalenet', scalenet: 'Scalenet',
+      reg: 'Regtest', regtest: 'Regtest',
+    }
+    return map[k] || (k ? k.charAt(0).toUpperCase() + k.slice(1) : '—')
+  }
+
   function updateBlockchain(data) {
     if (!data) return
 
@@ -243,9 +264,16 @@
     var net = data.network || {}
     var mem = data.mempool || {}
 
-    var progress = bc.verificationprogress
-    if (progress != null) {
-      var pct = Math.min(progress * 100, 100)
+    // verificationprogress is the primary signal, but some nodes (notably
+    // bchd) omit it once fully synced. Fall back to the blocks/headers ratio
+    // so the ring still reaches 100% at the tip instead of sticking on "-".
+    var pct = null
+    if (bc.verificationprogress != null) {
+      pct = Math.min(bc.verificationprogress * 100, 100)
+    } else if (bc.blocks != null && bc.headers != null && Number(bc.headers) > 0) {
+      pct = Math.min((Number(bc.blocks) / Number(bc.headers)) * 100, 100)
+    }
+    if (pct != null) {
       el('sync-pct').textContent = pct.toFixed(pct >= 99.9 ? 1 : 0) + '%'
       el('ring-label').textContent = pct.toFixed(0) + '%'
 
@@ -257,6 +285,16 @@
     var subver = net.subversion || ''
     var chain = bc.chain || 'main'
     el('sync-sub').textContent = chain + ' | ' + subver
+
+    // Prominent network badge so the (much smaller) chipnet/testnet figures
+    // aren't mistaken for mainnet.
+    var netBadge = el('net-badge')
+    if (netBadge) {
+      var nkey = String(chain).toLowerCase()
+      netBadge.textContent = networkLabel(nkey)
+      netBadge.className =
+        'net-badge' + (nkey === 'main' || nkey === 'mainnet' ? '' : ' testnet')
+    }
 
     el('node-blocks').textContent = formatNumber(bc.blocks)
     el('node-headers').textContent = formatNumber(bc.headers)
@@ -273,50 +311,42 @@
 
     var diff = mining.difficulty || bc.difficulty
     el('net-difficulty').textContent = formatDifficulty(diff)
-    el('net-hashrate').textContent = formatHashrate(mining.networkhashps)
+    // networkhashps comes straight from the node's getmininginfo. If a backend
+    // omits it, derive it from difficulty at BCH's 600s target block time
+    // (diff * 2^32 / 600) so the card still populates. A present value is never
+    // overridden.
+    var netHr = mining.networkhashps
+    if ((netHr == null || isNaN(netHr)) && diff) {
+      netHr = (Number(diff) * 4294967296) / 600
+    }
+    el('net-hashrate').textContent = formatHashrate(netHr)
   }
 
-  function updateEta(poolData, soloData, nodeData) {
+  function updateEta(poolData, nodeData) {
     var mining = (nodeData && nodeData.mining) || {}
     var diff = mining.difficulty
 
     var poolHr = 0
-    var soloHr = 0
     if (poolData && poolData.stats) {
       poolHr = Number(poolData.stats.hashrate1hr || poolData.stats.hashrate5m || poolData.stats.hashrate1m || 0)
     }
-    if (soloData && soloData.stats) {
-      soloHr = Number(soloData.stats.hashrate1hr || soloData.stats.hashrate5m || soloData.stats.hashrate1m || 0)
-    }
-    var totalHr = poolHr + soloHr
 
-    if (diff && totalHr > 0) {
-      var etaSec = (diff * 4294967296) / totalHr
+    if (diff && poolHr > 0) {
+      var etaSec = (diff * 4294967296) / poolHr
       el('eta-block').textContent = formatEta(etaSec)
     } else {
-      el('eta-block').textContent = totalHr > 0 ? '—' : 'No miners connected'
+      el('eta-block').textContent = poolHr > 0 ? '—' : 'No miners connected'
     }
   }
 
-  // Build a combined worker list from pool + solo data
-  function updateWorkers(poolData, soloData) {
+  function updateWorkers(poolData) {
     var allWorkers = []
-    var poolConnected = getConnectedCount(poolData)
-    var soloConnected = getConnectedCount(soloData)
-    var totalConnected = poolConnected + soloConnected
+    var totalConnected = getConnectedCount(poolData)
 
     var pw = (poolData && poolData.workers) || {}
     var poolList = pw.workers || []
     for (var i = 0; i < poolList.length; i++) {
-      poolList[i]._mode = 'pool'
       allWorkers.push(poolList[i])
-    }
-
-    var sw = (soloData && soloData.workers) || {}
-    var soloList = sw.workers || []
-    for (var j = 0; j < soloList.length; j++) {
-      soloList[j]._mode = 'solo'
-      allWorkers.push(soloList[j])
     }
 
     var tbody = el('workers-tbody')
@@ -390,11 +420,9 @@
       var lastShare = timeAgo(w.lastshare)
       var status = workerStatus(w)
       var statusLabel = status === 'alive' ? 'Alive' : status === 'idle' ? 'Idle' : 'Dead'
-      var modeClass = w._mode
 
       html += '<tr>'
-      html += '<td><span class="worker-name">' + escapeHtml(shortName) + '</span>'
-      html += '<span class="worker-mode ' + modeClass + '">' + w._mode + '</span></td>'
+      html += '<td><span class="worker-name">' + escapeHtml(shortName) + '</span></td>'
       html += '<td>' + hr5m + '</td>'
       html += '<td>' + hr60 + '</td>'
       html += '<td>' + formatNumber(acceptedCount) + '</td>'
@@ -405,7 +433,7 @@
       html += '<td><span class="status-dot ' + status + '"></span>'
       html += statusLabel + '</td>'
       var addrForDelete = (w.worker || w.user || '').split('.')[0]
-      html += '<td><button class="delete-btn" data-address="' + escapeHtml(addrForDelete) + '" data-mode="' + escapeHtml(w._mode) + '" title="Remove worker from stats">Delete</button></td>'
+      html += '<td><button class="delete-btn" data-address="' + escapeHtml(addrForDelete) + '" title="Remove worker from stats">Delete</button></td>'
       html += '</tr>'
     }
 
@@ -549,14 +577,12 @@
 
     Promise.all([
       fetchStats('/api/pool-stats.json'),
-      fetchStats('/api/solo-stats.json'),
       fetchStats('/api/node-stats.json'),
     ]).then(function (results) {
       var poolData = results[0]
-      var soloData = results[1]
-      var nodeData = results[2]
+      var nodeData = results[1]
 
-      var anyOnline = poolData || soloData || nodeData
+      var anyOnline = poolData || nodeData
       if (anyOnline) {
         badge.textContent = 'Online'
         badge.classList.add('online')
@@ -566,37 +592,42 @@
       }
 
       updateCard('pool', poolData)
-      updateCard('solo', soloData)
       updateBlockchain(nodeData)
-      updateEta(poolData, soloData, nodeData)
-      updateWorkers(poolData, soloData)
+      updateEta(poolData, nodeData)
+      updateWorkers(poolData)
     })
   }
 
-  // ── Stratum URLs — dynamic, Tor-aware ────────────────────────────
-  // The pool exposes stratum on both LAN and Tor (via StartOS MultiHost).
-  // The dashboard is served from the same host, so window.location.hostname
-  // tells us which interface the user is on. If .onion → show Tor badge.
+  // ── Stratum URL ──────────────────────────────────────────────────
+  // The dashboard is served from the same host the miner will dial, so
+  // window.location.hostname is the right hostname to suggest. The port is the
+  // pool's internal one, which is only the reachable one when StartOS granted
+  // the preferred external port — the Connection Info action is authoritative.
   function setupStratumUrls() {
+    var DEFAULT_POOL_PORT = 3334
+
     var host = window.location.hostname || 'localhost'
-    var isTor = host.endsWith('.onion')
 
-    var poolUrl   = el('pool-stratum-url')
-    var soloUrl   = el('solo-stratum-url')
-    var poolBadge = el('pool-tor-badge')
-    var soloBadge = el('solo-tor-badge')
-
-    if (poolUrl) poolUrl.textContent = 'stratum+tcp://' + host + ':3334'
-    if (soloUrl) soloUrl.textContent = 'stratum+tcp://' + host + ':4568'
-    var guidePool = el('guide-pool-url')
-    var guideSolo = el('guide-solo-url')
-    if (guidePool) guidePool.textContent = 'stratum+tcp://' + host + ':3334'
-    if (guideSolo) guideSolo.textContent = 'stratum+tcp://' + host + ':4568'
-
-    if (isTor) {
-      if (poolBadge) poolBadge.style.display = ''
-      if (soloBadge) soloBadge.style.display = ''
+    function applyPorts(poolPort) {
+      var pp = poolPort || DEFAULT_POOL_PORT
+      var poolUrl    = el('pool-stratum-url')
+      var guidePool  = el('guide-pool-url')
+      var poolPortEl = el('pool-port')
+      if (poolUrl)    poolUrl.textContent = 'stratum+tcp://' + host + ':' + pp
+      if (guidePool)  guidePool.textContent = 'stratum+tcp://' + host + ':' + pp
+      if (poolPortEl) poolPortEl.textContent = pp
     }
+
+    if (host.endsWith('.onion')) {
+      var poolBadge = el('pool-tor-badge')
+      if (poolBadge) poolBadge.style.display = ''
+    }
+
+    // Show the default immediately, then refine from the served config.
+    applyPorts(DEFAULT_POOL_PORT)
+    fetchStats('/api/config.json').then(function (cfg) {
+      if (cfg && cfg.poolPort) applyPorts(Number(cfg.poolPort))
+    })
   }
 
   // Add SVG gradient for the ring
@@ -624,11 +655,10 @@
       var btn = e.target
       if (!btn || btn.className.indexOf('delete-btn') < 0) return
       var address = btn.getAttribute('data-address')
-      var mode    = btn.getAttribute('data-mode')
-      if (!address || !mode) return
+      if (!address) return
       btn.disabled = true
       btn.textContent = '...'
-      fetch('/api/delete-worker?address=' + encodeURIComponent(address) + '&mode=' + encodeURIComponent(mode), { method: 'POST' })
+      fetch('/api/delete-worker?address=' + encodeURIComponent(address), { method: 'POST' })
         .then(function (res) { return res.json() })
         .then(function (data) {
           if (data.ok) {
