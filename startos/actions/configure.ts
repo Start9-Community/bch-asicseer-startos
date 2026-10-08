@@ -20,7 +20,7 @@ export const configure = sdk.Action.withInput(
     payoutAddress: Value.text({
       name: i18n('Payout Address'),
       description: i18n(
-        'The address a found block pays to. It must belong to the chain the node is on — mainnet addresses start bitcoincash:, the test chains bchtest:, regtest bchreg:.',
+        'The address your pool fee is paid to, in the coinbase of every block the pool finds. It must belong to the chain the node is on — mainnet addresses start bitcoincash:, the test chains bchtest:, regtest bchreg:.',
       ),
       required: true,
       default: null,

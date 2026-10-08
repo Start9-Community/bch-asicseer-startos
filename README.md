@@ -86,13 +86,15 @@ The store holds the node selection, the payout address, the pool fee, identifier
 
 ## Dependencies
 
-Three declared, **exactly one active** — whichever node you select.
+Three optional dependencies, **exactly one enabled** — whichever node you select.
 
-| Dependency          | Required         | Health checks required | Why                            |
-| ------------------- | ---------------- | ---------------------- | ------------------------------ |
-| Bitcoin Cash Node   | Only if selected | `primary`              | Block templates and submission |
-| Bitcoin Cash Daemon | Only if selected | `rpc-plaintext`        | The same                       |
-| Flowee the Hub      | Only if selected | `primary`              | The same                       |
+| Dependency          | Required         | Minimum version | Health checks required | Why                            |
+| ------------------- | ---------------- | --------------- | ---------------------- | ------------------------------ |
+| Bitcoin Cash Node   | Only if selected | `29.0.0:11`     | `primary`              | Block templates and submission |
+| Bitcoin Cash Daemon | Only if selected | `0.22.2:0`      | `rpc-plaintext`        | The same                       |
+| Flowee the Hub      | Only if selected | `2026.5.2:12`   | `primary`              | The same                       |
+
+**Bitcoin Cash Node's minimum is the first build that moves its RPC binding when it switches chain**; on an older one the pool loses the node after a switch.
 
 **They are gated on being up, not on being synced**, and that is a deliberate trade: a node's initial sync takes days, and refusing to start for that long is less useful than starting and _reporting_ that the chain is behind — which the Node health check does.
 
@@ -102,7 +104,7 @@ Three declared, **exactly one active** — whichever node you select.
 - **Bitcoin Cash Daemon is dialed through its plaintext proxy** rather than its own TLS RPC, so no certificate has to be trusted here.
 - **Flowee keeps only a hash of each RPC password** and cannot hand one back. So this package **mints its own credential** and asks Flowee to register it — see [Tasks](#tasks).
 
-Selecting a node also clears the tasks belonging to the nodes you are not on, so switching away from Flowee does not leave its credential prompt behind.
+A node you switch away from stops being a dependency, and StartOS hides any task still pending on it — Flowee's credential prompt included — until it is selected again.
 
 ## Network Access and Interfaces
 
@@ -135,7 +137,7 @@ Four actions.
 
 ### Select Node Backend
 
-Chooses which of the three Bitcoin Cash nodes the pool mines against.
+Chooses which of the three Bitcoin Cash nodes the pool mines against. Nothing is preselected until a node has been chosen; after that the form opens on the current one.
 
 - **What it changes:** the selection, and through it the dependency, the mount, and the RPC address.
 - **Cost:** the pool restarts onto the new node.
@@ -233,10 +235,10 @@ file_models:
   - pool/asicseer.conf # generated in full by main at every start
   - store.json # node selection, payout address, fee, identifier, difficulty, flowee creds
 startos_managed_env_vars: [] # everything is asicseer.conf
-dependencies: # exactly one is declared at a time, from the stored selection
-  - bitcoincashd # healthChecks: [primary]; RPC port varies per chain
-  - bchd # healthChecks: [rpc-plaintext]; dialed via the plaintext proxy, no cert to trust
-  - flowee # healthChecks: [primary]; needs a credential registered via createTask
+dependencies: # all three optional; exactly one enabled at a time, from the stored selection
+  - bitcoincashd # >=29.0.0:11; healthChecks: [primary]; RPC port varies per chain
+  - bchd # >=0.22.2:0; healthChecks: [rpc-plaintext]; dialed via the plaintext proxy, no cert to trust
+  - flowee # >=2026.5.2:12; healthChecks: [primary]; needs a credential registered via createTask
 interfaces:
   pool-mining: { type: p2p, port: 3334 } # raw TCP, schemeOverride stratum+tcp
   web-ui: { type: ui, port: 81 } # no authentication
