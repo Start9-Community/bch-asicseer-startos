@@ -153,7 +153,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
 
   if (!payoutAddress) {
     const message = i18n(
-      'No payout address is set. Open Configure and set the address a found block should pay to.',
+      'No payout address is set. Open Configure and set the address your pool fee is paid to.',
     )
     await raisePayoutTask(message)
     return blocked(message)

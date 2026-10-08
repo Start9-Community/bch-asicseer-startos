@@ -5,7 +5,7 @@ const dict = {
   Configure: 0,
   'Set the payout address and how the pool pays out.': 1,
   'Payout Address': 2,
-  'The address a found block pays to. It must belong to the chain the node is on — mainnet addresses start bitcoincash:, the test chains bchtest:, regtest bchreg:.': 3,
+  'The address your pool fee is paid to, in the coinbase of every block the pool finds. It must belong to the chain the node is on — mainnet addresses start bitcoincash:, the test chains bchtest:, regtest bchreg:.': 3,
   'A Bitcoin Cash address, either CashAddr (bitcoincash:q…) or legacy.': 4,
   'Pool Fee': 5,
   'The share of each block reward the pool keeps. The rest is split between the miners that worked on it.': 6,
@@ -33,7 +33,7 @@ const dict = {
   'Choose which Bitcoin Cash node the pool gets its block templates from.': 24,
   'The pool restarts against the new node. If that node is on a different chain, the accumulated share and hashrate figures are cleared, because they do not carry across chains.': 25,
   'Node Backend': 26,
-  'The node must be installed and fully synced before the pool can mine on it.': 27,
+  'Choose a node you have installed. Blocks found before it has fully synced are rejected by the network.\n- Bitcoin Cash Node: nothing more to set up\n- Bitcoin Cash Daemon: nothing more to set up\n- Flowee the Hub: raises a task on Flowee to register the login the pool uses': 27,
   'Bitcoin Cash Node': 28,
   'Bitcoin Cash Daemon': 29,
   'Flowee the Hub': 30,
@@ -45,7 +45,7 @@ const dict = {
   'Every share count and hashrate figure goes back to zero, and connected miners briefly disconnect. Blocks already found are not affected.': 34,
 
   // init/taskConfigure.ts
-  'Set the address the pool pays a found block to': 35,
+  'Set the address your pool fee is paid to': 35,
 
   // init/taskSelectNode.ts
   'Choose which Bitcoin Cash node the pool mines on': 36,
@@ -60,7 +60,7 @@ const dict = {
   'Starting ASICSeer': 41,
   'The selected node reports an unrecognized chain: ${chain}.': 42,
   Mining: 43,
-  'No payout address is set. Open Configure and set the address a found block should pay to.': 44,
+  'No payout address is set. Open Configure and set the address your pool fee is paid to.': 44,
   'The payout address does not belong to the chain the node is on (${chain}). Open Configure and set an address starting ${prefix}': 45,
   'The ${node} node is not reachable. The pool will start once it is installed and running.': 46,
   'Clearing mining statistics (chain is now ${chain})': 47,

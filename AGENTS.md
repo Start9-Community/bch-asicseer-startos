@@ -18,20 +18,23 @@ Freshly scaffolded? Work the
 guide page, not a file in this repo — read it, don't copy it in.
 
 Keep `README.md` (technical reference for an AI support or administering agent) and
-`instructions.md` (end-user docs) in sync with your changes.
+`instructions.md` (end-user docs) in sync with your changes. This file restates neither:
+whoever changes the package has both, so it carries only what they don't — repo mechanics,
+a change that looks right and is not, where the next thing gets added, a naming trap, a
+build or test invocation particular to this repo.
 
-**Bugs and feature requests are GitHub issues on this repo** — file them as you find them.
+**Fix a defect you spot rather than reporting it** — you have the package open and the
+context to be sure. File **a GitHub issue on this repo** only when the call isn't yours to
+make: you can't pin the cause down, two defensible fixes exist, or it's too large to ride on
+the work in hand. An open issue is a report, not a queue — implement one when you're asked
+to or when it's labelled `Approved`, then close it with `Closes #<n>`.
+
 Don't record work in the repo instead: no `TODO.md`, no `NOTES.md`, no `PLAN.md`. What you
 verified, tried, and decided belongs in the commit message and the PR body.
 
 ## This repo
 
-- **`Dockerfile` builds asicseer-pool from source**, in about a minute. Do not reintroduce the retired arrangement where a separate workflow pushed a prebuilt binary image to GHCR and the `Dockerfile` copied binaries out of it: that image was amd64-only while the manifest claimed aarch64, and it lived in a namespace this repo cannot publish to.
-- **`pool_fee` must be written with a decimal point.** asicseer-pool reads it through jansson's `json_is_real`, which is false for a whole number — `"pool_fee": 0` is discarded in favour of the built-in 1% default. `fileModels/asicseer.conf.ts` handles that with a placeholder substitution; don't "simplify" it back to plain `JSON.stringify`.
-- **`main` must never throw for a user-fixable problem.** A thrown `main` crash-loops under auto-restart and leaks a mount set every cycle, so the missing/mismatched payout address and unreachable node paths return a single failing `mining` health check instead. Keep that shape.
-- **Statistics must be wiped before the daemons launch.** asicseer-pool reloads its totals from `{logdir}/pool/pool.status` at start, so clearing under a running pool achieves nothing. A chain change wipes them too — shares counted at one chain's difficulty mean nothing on another.
-- **The payout address is chain-checked locally, by prefix.** Flowee's `validateaddress` is legacy-base58-only and calls every CashAddr invalid, so asking the node is not an option.
-- **BCHN remaps its RPC port per chain**; BCHD and Flowee are fixed. BCHD is dialed through its plaintext proxy so no certificate has to be trusted.
-- **The node is reached with `sdk.host.getBridgeAddress`, never `<package-id>.startos`** — that overlay DNS is deprecated and forbidden.
-- **The `mining` check scrapes the log before probing the port.** asicseer-pool holds the stratum port open while it cannot get a block template, so a bare port check reports a pool that mines nothing.
-- **The configured payout address collects the pool fee only.** Miners are paid in the coinbase, to the address each supplies as its stratum username — don't describe it as "where blocks are paid".
+- **`Dockerfile` builds asicseer-pool from source.** Don't go back to copying binaries out of a prebuilt image: the one this repo used was amd64-only while the manifest claimed aarch64.
+- **Keep the `pool_fee` placeholder substitution in `fileModels/asicseer.conf.ts`.** asicseer-pool reads the fee with jansson's `json_is_real`, which rejects a whole number and falls back to 1%, so plain `JSON.stringify` turns a 0% fee into 1%.
+- **Don't let `main` throw for a user-fixable problem, and don't reduce the `mining` check to a port probe.** A thrown `main` crash-loops and leaks a mount set each cycle; asicseer-pool holds the stratum port open while it has no block template.
+- **Wipe statistics in `main` before the daemons launch, and chain-check the payout address by prefix.** The pool reloads its totals from `pool.status` at start, and Flowee's `validateaddress` calls every CashAddr invalid.
