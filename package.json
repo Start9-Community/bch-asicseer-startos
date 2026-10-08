@@ -1,26 +1,12 @@
 {
   "name": "bch-asicseer-startos",
-  "scripts": {
-    "build": "rm -rf ./javascript && ncc build startos/index.ts -o ./javascript",
-    "prettier": "prettier --write startos",
-    "check": "tsc --noEmit"
-  },
   "dependencies": {
-    "@start9labs/start-sdk": "^1.2.1",
-    "bitcoin-cash-node-startos": "file:../bitcoin-cash-node-startos",
-    "bitcoin-cash-daemon-startos": "file:../bitcoin-cash-daemon-startos",
-    "flowee-startos": "file:../flowee-startos"
+    "@start9labs/start-sdk": "3.0.3",
+    "bitcoin-cash-daemon-startos": "github:Start9-Community/bitcoin-cash-daemon-startos#next",
+    "bitcoin-cash-node-startos": "github:Start9-Community/bitcoin-cash-node-startos#next",
+    "flowee-startos": "github:Start9-Community/flowee-the-hub-startos#next"
   },
-  "devDependencies": {
-    "@types/node": "^22.19.0",
-    "@vercel/ncc": "^0.38.4",
-    "prettier": "^3.6.2",
-    "typescript": "^5.9.3"
-  },
-  "prettier": {
-    "trailingComma": "all",
-    "tabWidth": 2,
-    "semi": false,
-    "singleQuote": true
+  "overrides": {
+    "@start9labs/start-sdk": "$@start9labs/start-sdk"
   }
 }

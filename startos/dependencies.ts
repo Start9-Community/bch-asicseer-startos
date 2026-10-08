@@ -1,112 +1,61 @@
-import { autoconfig as bchnAutoconfig } from 'bitcoin-cash-node-startos/startos/actions/config/autoconfig'
-import { autoconfig as bchdAutoconfig } from 'bitcoin-cash-daemon-startos/startos/actions/config/autoconfig'
-import { autoconfig as floweeAutoconfig } from 'flowee-startos/startos/actions/config/autoconfig'
+import { T } from '@start9labs/start-sdk'
+import { storeJson } from './fileModels/store.json'
+import {
+  bchdDescription,
+  bitcoincashdDescription,
+  floweeDescription,
+} from './manifest/i18n'
 import { sdk } from './sdk'
-import { storeJson } from './file-models/store.json'
+import { NodeId } from './utils'
 
-export const setDependencies = sdk.setupDependencies(async ({ effects }) => {
-  const store = await storeJson.read().const(effects)
-  const selectedNodePackageId = store?.nodePackageId ?? 'bitcoincashd'
-  const nodePackageId = ['bitcoincashd', 'bchd', 'flowee', 'knuth-bch'].includes(selectedNodePackageId)
-    ? selectedNodePackageId
-    : 'bitcoincashd'
+const selected = async (effects: T.Effects, node: NodeId) =>
+  ((await storeJson.read((s) => s.nodePackageId).const(effects)) ??
+    'bitcoincashd') === node
 
-  // Purge stale tasks from previous node selections
-  await sdk.action.clearTask(
-    effects,
-    'bitcoincashd:autoconfig',
-    'bchd:autoconfig',
-    'flowee:autoconfig',
-    'knuth-bch:autoconfig',
-    'bitcoincashd-autoconfig',
-    'bchd-autoconfig',
-    'flowee-autoconfig',
-    'knuth-bch-autoconfig',
-    'select-node',
-    'bitcoincash:autoconfig',
-  )
-
-  if (store?.nodeConfirmed) {
-    if (nodePackageId === 'bchd') {
-      // BCHD: ensure pruning off (mining needs full chain)
-      await sdk.action.createTask(effects, 'bchd', bchdAutoconfig, 'critical', {
-        input: {
-          kind: 'partial',
-          value: {
-            prune: 0,
-          },
-        },
-        reason:
-          'Pruning must be disabled for mining pool operation.',
-        when: { condition: 'input-not-matches', once: false },
-      })
-    } else if (nodePackageId === 'flowee') {
-      // Flowee: ensure REST API is on
-      await sdk.action.createTask(effects, 'flowee', floweeAutoconfig, 'critical', {
-        input: {
-          kind: 'partial',
-          value: {
-            rest: true,
-          },
-        },
-        reason:
-          'REST API must be enabled for mining pool operation.',
-        when: { condition: 'input-not-matches', once: false },
-      })
-    } else if (nodePackageId === 'knuth-bch') {
-      // Knuth: no JSON-RPC in upstream yet; nothing to autoconfigure.
-      // Mining pool will fail at RPC handshake until upstream RPC ships.
-    } else {
-      // BCHN: txindex=true implicitly enforces non-pruned operation and avoids prune null/0 mismatch.
-      await sdk.action.createTask(effects, nodePackageId, bchnAutoconfig, 'critical', {
-        input: {
-          kind: 'partial',
-          value: {
-            txindex: true,
-          },
-        },
-        reason:
-          'Mining RPC requires BCHN in non-pruned mode with txindex enabled.',
-        when: { condition: 'input-not-matches', once: false },
-      })
-    }
-  }
-
-  const deps: Record<string, { kind: 'running'; versionRange: string; healthChecks: string[] }> = {}
-
-  if (nodePackageId === 'bchd') {
-    deps['bchd'] = {
-      kind: 'running',
-      versionRange: '>=0.21.1:0',
-      healthChecks: ['primary'],
-    }
-  } else if (nodePackageId === 'flowee') {
-    deps['flowee'] = {
-      kind: 'running',
-      versionRange: '>=2026.2.0:0',
-      healthChecks: ['primary'],
-    }
-  } else if (nodePackageId === 'knuth-bch') {
-    deps['knuth-bch'] = {
-      kind: 'running',
-      versionRange: '>=0.80.0:0',
-      healthChecks: ['primary'],
-    }
-  } else {
-    deps[nodePackageId] = {
-      kind: 'running',
-      versionRange: '>=29.0.0:0',
-      healthChecks: ['primary'],
-    }
-  }
-
-  if ((store?.torMode ?? 'off') !== 'off') {
-    deps['tor'] = {
-      kind: 'running',
-      versionRange: '>=0.0.0:0',
-      healthChecks: ['primary'],
-    }
-  }
-
-  return deps as any
+// Gated on the node being up, not synced — `node-status` reports the latter,
+// which is more use than refusing to start for the days a sync takes.
+const bitcoincashd = sdk.Dependency.optional('bitcoincashd', {
+  description: bitcoincashdDescription,
+  metadata: {
+    title: 'Bitcoin Cash Node',
+    icon: 'https://raw.githubusercontent.com/Start9-Community/bitcoin-cash-node-startos/master/icon.png',
+  },
+  versionRange: '>=29.0.0:11',
+  kind: 'running',
+  healthChecks: ['primary'],
+  enabled: async ({ effects }) => selected(effects, 'bitcoincashd'),
 })
+
+const bchd = sdk.Dependency.optional('bchd', {
+  description: bchdDescription,
+  metadata: {
+    title: 'Bitcoin Cash Daemon',
+    icon: 'https://raw.githubusercontent.com/Start9-Community/bitcoin-cash-daemon-startos/master/icon.png',
+  },
+  versionRange: '>=0.22.2:0',
+  kind: 'running',
+  // Dialed through BCHD's plaintext proxy, not its self-signed TLS RPC, so
+  // the proxy is the binding that has to be up.
+  healthChecks: ['rpc-plaintext'],
+  enabled: async ({ effects }) => selected(effects, 'bchd'),
+})
+
+// Flowee's credential task is raised by Select Node Backend: Flowee keeps only
+// a hash and reports no current input, so raising it from here would re-raise
+// it on every init.
+const flowee = sdk.Dependency.optional('flowee', {
+  description: floweeDescription,
+  metadata: {
+    title: 'Flowee the Hub',
+    icon: 'https://raw.githubusercontent.com/Start9-Community/flowee-the-hub-startos/master/icon.png',
+  },
+  versionRange: '>=2026.5.2:12',
+  kind: 'running',
+  healthChecks: ['primary'],
+  enabled: async ({ effects }) => selected(effects, 'flowee'),
+})
+
+export const dependencies = sdk.Dependencies.of()
+  .addDependency(bitcoincashd)
+  .addDependency(bchd)
+  .addDependency(flowee)
