@@ -140,6 +140,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
     sdk.Daemons.of(effects).addHealthCheck('mining', {
       ready: {
         display: i18n('Mining'),
+        // The result only changes when main restarts, so check once.
+        gracePeriod: 0,
+        trigger: async function* () {
+          yield
+        },
         fn: async () => ({ result: 'failure', message }) as const,
       },
       requires: [],
