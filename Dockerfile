@@ -21,7 +21,7 @@ RUN python3 /build/patches/apply.py
 RUN mkdir out && cd out && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j"$(nproc)"
 
 # ── Runtime ─────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim
+FROM node:22.23.4-bookworm-slim
 
 ENV NODE_ENV=production
 
