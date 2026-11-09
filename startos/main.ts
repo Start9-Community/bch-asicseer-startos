@@ -207,7 +207,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
     bchsig: `/${settings?.poolIdentifier ?? 'ASICSeer'}/`,
     blockpoll: 100,
     update_interval: 30,
-    serverurl: [`0.0.0.0:${poolPort}`],
+    serverurl: [`[::]:${poolPort}`],
     mindiff: 1,
     startdiff: settings?.poolDifficulty ?? 42,
     // 0 is upstream's default: no cap, vardiff follows the hardware.

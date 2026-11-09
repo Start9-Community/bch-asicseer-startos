@@ -1,14 +1,16 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '1.5.4:27',
+  version: '1.5.4:28',
   releaseNotes: {
-    en_US: 'Includes the October 2026 Node.js security fixes.',
+    en_US: "Miners can now connect over the server's IPv6 addresses.",
     es_ES:
-      'Incluye las correcciones de seguridad de Node.js de octubre de 2026.',
-    de_DE: 'Enthält die Node.js-Sicherheitskorrekturen vom Oktober 2026.',
-    pl_PL: 'Zawiera poprawki bezpieczeństwa Node.js z października 2026.',
-    fr_FR: "Inclut les correctifs de sécurité Node.js d'octobre 2026.",
+      'Los mineros ahora pueden conectarse a través de las direcciones IPv6 del servidor.',
+    de_DE:
+      'Miner können sich jetzt über die IPv6-Adressen des Servers verbinden.',
+    pl_PL: 'Koparki mogą teraz łączyć się przez adresy IPv6 serwera.',
+    fr_FR:
+      'Les mineurs peuvent désormais se connecter via les adresses IPv6 du serveur.',
   },
   migrations: {
     up: async ({ effects }) => {},
