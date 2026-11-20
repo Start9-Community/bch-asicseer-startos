@@ -3,12 +3,23 @@ FROM ubuntu:22.04 AS build
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential cmake libzmq3-dev ca-certificates git python3 && \
+    build-essential cmake libzmq3-dev ca-certificates git gnupg python3 && \
     rm -rf /var/lib/apt/lists/*
 
 ARG ASICSEER_REF=v1.5.4
-RUN git clone --depth 1 --branch ${ASICSEER_REF} \
-    https://github.com/cculianu/asicseer-pool.git /build/asicseer
+ARG ASICSEER_COMMIT=7a71b153c93c1a9ef914b716b9a3f6b1072c98aa
+# Calin Culianu's key, which signs asicseer-pool's release commits.
+ARG ASICSEER_SIGNING_KEY=D465135F97D0047E18E99DC321810A542031C02C
+COPY assets/release-signing-key.asc /build/release-signing-key.asc
+RUN git -c advice.detachedHead=false clone --depth 1 --branch "${ASICSEER_REF}" \
+    https://github.com/cculianu/asicseer-pool.git /build/asicseer \
+ && cd /build/asicseer \
+ && git checkout -q "${ASICSEER_COMMIT}" \
+ && test "$(git rev-parse HEAD)" = "${ASICSEER_COMMIT}" \
+ && export GNUPGHOME="$(mktemp -d)" \
+ && gpg --batch --quiet --import /build/release-signing-key.asc \
+ && git verify-commit --raw HEAD 2>&1 \
+    | grep -q "^\[GNUPG:\] VALIDSIG .* ${ASICSEER_SIGNING_KEY}\$"
 
 COPY patches/ /build/patches/
 WORKDIR /build/asicseer
