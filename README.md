@@ -48,6 +48,8 @@ One image, built here, running twice.
 | `pool-sub`   | The pool itself — attach here for mining logs |
 | `ui-sub`     | The dashboard, from the same image            |
 
+The build clones asicseer-pool's pinned release tag and fails unless the tag resolves to the pinned commit and that commit carries a valid signature from Calin Culianu's key (kept in `assets/release-signing-key.asc`).
+
 Both mount the same volumes; the dashboard reads what the pool writes.
 
 ## Volume and Data Layout
