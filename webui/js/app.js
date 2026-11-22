@@ -146,12 +146,19 @@
     return Math.floor(diff / 86400) + 'd ago'
   }
 
+  // asicseer-pool ends the address part of a username at the first '.' or '_'
+  // (stratifier.c generate_user), and everything after it names the worker.
+  function workerSepIndex(name) {
+    return String(name || '').search(/[._]/)
+  }
+
   function normalizeAddress(raw) {
     var s = String(raw || '')
       .trim()
       .toLowerCase()
     if (!s) return ''
-    if (s.indexOf('.') > 0) s = s.substring(0, s.indexOf('.'))
+    var sep = workerSepIndex(s)
+    if (sep > 0) s = s.substring(0, sep)
     if (s.indexOf('bitcoincash:') === 0) s = s.substring('bitcoincash:'.length)
     return s
   }
@@ -423,7 +430,7 @@
     var autoCount = {}
     for (var a = 0; a < activeWorkers.length; a++) {
       var wn = activeWorkers[a].worker || activeWorkers[a].user || ''
-      var di = wn.indexOf('.')
+      var di = workerSepIndex(wn)
       if (di <= 0 || di === wn.length - 1) {
         var addr = di > 0 ? wn.substring(0, di) : wn
         autoCount[addr] = (autoCount[addr] || 0) + 1
@@ -437,7 +444,7 @@
       var w = activeWorkers[k]
       var name = w.worker || w.user || '—'
       var shortName
-      var dotIdx = name.indexOf('.')
+      var dotIdx = workerSepIndex(name)
       if (dotIdx > 0 && dotIdx < name.length - 1) {
         shortName = name.substring(dotIdx + 1)
       } else {
@@ -474,7 +481,7 @@
       html += '<td>' + lastShare + '</td>'
       html += '<td><span class="status-dot ' + status + '"></span>'
       html += statusLabel + '</td>'
-      var addrForDelete = (w.worker || w.user || '').split('.')[0]
+      var addrForDelete = (w.worker || w.user || '').split(/[._]/)[0]
       html +=
         '<td><button class="delete-btn" data-address="' +
         escapeHtml(addrForDelete) +
@@ -488,10 +495,14 @@
     updateMyDevices(activeWorkers)
   }
 
+  // Safe in element text and in quoted attribute values.
   function escapeHtml(s) {
-    var d = document.createElement('div')
-    d.appendChild(document.createTextNode(s))
-    return d.innerHTML
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
   }
 
   // ── Login / Address Filter ────────────────────────────────────────
@@ -570,7 +581,7 @@
       var w = myWorkers[i]
       var name = w.worker || w.user || '—'
       var shortName
-      var dotIdx = name.indexOf('.')
+      var dotIdx = workerSepIndex(name)
       if (dotIdx > 0 && dotIdx < name.length - 1) {
         shortName = name.substring(dotIdx + 1)
       } else {
@@ -722,6 +733,9 @@
       btn.textContent = '...'
       fetch('/api/delete-worker?address=' + encodeURIComponent(address), {
         method: 'POST',
+        // A header no cross-site form or simple request can send;
+        // delete-worker.js refuses the request without it.
+        headers: { 'X-Requested-With': 'asicseer-dashboard' },
       })
         .then(function (res) {
           return res.json()
