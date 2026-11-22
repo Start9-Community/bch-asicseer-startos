@@ -121,7 +121,7 @@ Two interfaces.
 
 **Stratum is unencrypted, and that is the protocol, not a choice here.** Mining hardware speaks it in the clear.
 
-**Neither interface is authenticated**, and for the stratum port that is how a pool works: a miner identifies itself by putting **its own** payout address in the username, and the password is ignored. Anyone who can reach the port can mine here and be paid to their own address, paying you the pool fee for the privilege — so exposure is a question of whether you want to run a public pool, not of whether someone can take your money. Anyone who can reach the dashboard sees your mining statistics.
+**Neither interface is authenticated**, and for the stratum port that is how a pool works: a miner identifies itself by putting **its own** payout address in the username, and the password is ignored. Anyone who can reach the port can mine here and be paid to their own address, paying you the pool fee for the privilege — so exposure is a question of whether you want to run a public pool, not of whether someone can take your money. Anyone who can reach the dashboard sees your mining statistics and can remove a worker from its list. Another website open in your browser can do neither: the delete endpoint (`assets/delete-worker.js`) refuses a request whose `Origin` is not the dashboard's own host or that lacks the header the dashboard sends, and the dashboard serves no CORS headers.
 
 ## Installation and First-Run Flow
 

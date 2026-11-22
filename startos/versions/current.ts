@@ -1,18 +1,18 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '1.5.4:29',
+  version: '1.5.4:30',
   releaseNotes: {
     en_US:
-      "Packaging update: the asicseer-pool source is checked against the exact release and its developer's signature before it is built. Nothing changes in how the pool runs.",
+      'Dashboard update: other websites open in your browser can no longer remove workers from the dashboard or read its statistics. Workers named with an underscore (bitcoincash:q…_rig1) now show their name, appear under My Devices, and can be deleted.',
     es_ES:
-      'Actualización del empaquetado: el código fuente de asicseer-pool se verifica contra la versión exacta y la firma de su desarrollador antes de compilarse. No cambia nada en el funcionamiento del pool.',
+      'Actualización del panel: otros sitios web abiertos en su navegador ya no pueden eliminar trabajadores del panel ni leer sus estadísticas. Los trabajadores nombrados con un guion bajo (bitcoincash:q…_rig1) ahora muestran su nombre, aparecen en My Devices y se pueden eliminar.',
     de_DE:
-      'Paketierungs-Update: Der Quellcode von asicseer-pool wird vor dem Bauen gegen die exakte Version und die Signatur des Entwicklers geprüft. An der Funktionsweise des Pools ändert sich nichts.',
+      'Dashboard-Update: Andere in Ihrem Browser geöffnete Websites können keine Worker mehr aus dem Dashboard entfernen und seine Statistiken nicht mehr lesen. Worker, die mit einem Unterstrich benannt sind (bitcoincash:q…_rig1), zeigen jetzt ihren Namen, erscheinen unter My Devices und lassen sich löschen.',
     pl_PL:
-      'Aktualizacja pakietu: kod źródłowy asicseer-pool jest sprawdzany względem dokładnego wydania i podpisu jego twórcy przed kompilacją. Działanie kopalni się nie zmienia.',
+      'Aktualizacja panelu: inne strony otwarte w przeglądarce nie mogą już usuwać koparek z panelu ani odczytywać jego statystyk. Koparki nazwane z podkreślnikiem (bitcoincash:q…_rig1) pokazują teraz swoją nazwę, pojawiają się w My Devices i można je usunąć.',
     fr_FR:
-      "Mise à jour de l'empaquetage : le code source d'asicseer-pool est vérifié par rapport à la version exacte et à la signature de son développeur avant d'être compilé. Rien ne change dans le fonctionnement du pool.",
+      'Mise à jour du tableau de bord : les autres sites ouverts dans votre navigateur ne peuvent plus supprimer de mineurs du tableau de bord ni lire ses statistiques. Les mineurs nommés avec un tiret bas (bitcoincash:q…_rig1) affichent désormais leur nom, apparaissent dans My Devices et peuvent être supprimés.',
   },
   migrations: {
     up: async ({ effects }) => {},
