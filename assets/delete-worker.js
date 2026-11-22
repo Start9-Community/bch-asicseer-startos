@@ -13,16 +13,25 @@ var url = require('url')
 var SAFE_ADDR =
   /^(bitcoincash:[pq][a-z0-9]{41,50}|[pq][a-z0-9]{41,50}|[13][a-zA-Z0-9]{25,34})$/i
 
+// Only the dashboard itself may delete. A browser sends Origin on every POST;
+// when present it must name the host the request was sent to (nginx passes the
+// client's Host through). The custom header can't be set by a cross-site form
+// or simple request, and with no CORS headers here its preflight fails.
+function sameOrigin(req) {
+  var origin = req.headers.origin
+  if (origin === undefined) return true
+  var host = req.headers.host
+  if (!host) return false
+  try {
+    return new URL(origin).host === host.toLowerCase()
+  } catch (e) {
+    return false
+  }
+}
+
 http
   .createServer(function (req, res) {
     res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204)
-      res.end()
-      return
-    }
 
     if (req.method !== 'POST') {
       res.writeHead(405)
@@ -34,6 +43,15 @@ http
     if (parsed.pathname !== '/api/delete-worker') {
       res.writeHead(404)
       res.end(JSON.stringify({ ok: false, error: 'Not found' }))
+      return
+    }
+
+    if (
+      !sameOrigin(req) ||
+      req.headers['x-requested-with'] !== 'asicseer-dashboard'
+    ) {
+      res.writeHead(403)
+      res.end(JSON.stringify({ ok: false, error: 'Forbidden' }))
       return
     }
 
