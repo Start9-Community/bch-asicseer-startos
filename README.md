@@ -98,8 +98,6 @@ Three optional dependencies, **exactly one enabled** — whichever node you sele
 | Bitcoin Cash Daemon | Only if selected | `0.22.2:8`      | `rpc-plaintext`        | The same                       |
 | Flowee the Hub      | Only if selected | `2026.5.2:19`   | `primary`              | The same                       |
 
-**Each minimum is the node's first build that publishes `rpc.json` on its `public` volume**; against an older node the pool cannot learn the chain or the login.
-
 **They are gated on being up, not on being synced**, and that is a deliberate trade: a node's initial sync takes days, and refusing to start for that long is less useful than starting and _reporting_ that the chain is behind — which the Node health check does.
 
 **Each node is dialed differently**, and the differences are real rather than cosmetic:
@@ -133,7 +131,7 @@ Selecting **Flowee** raises a third task — on Flowee, not here — asking it t
 
 Once the node is running, the pool writes its configuration, starts, and accepts miners. Point hardware at the stratum address.
 
-**The pool does not refuse to start for a fixable problem.** When the node is not installed or too old to publish its network and login, when there is no payout address, when the address belongs to the wrong chain, or when the node is unreachable, the service comes up with a single failing health check that says which — rather than throwing. That is not politeness: a thrown start-up crash-loops under automatic restart and leaks a mount set on every cycle.
+**The pool does not refuse to start for a fixable problem.** When the node is not installed, when there is no payout address, when the address belongs to the wrong chain, or when the node is unreachable, the service comes up with a single failing health check that says which.
 
 ## Actions
 
@@ -197,7 +195,7 @@ Three checks.
 
 **The mining check reads the log before it probes the port, and that is the important part.** ASICSeer holds the stratum port open even when it cannot get a block template — so a bare port check would report a healthy pool that mines nothing. The check looks for the two failures that produce exactly that: a payout address the node rejected, and a node that is not answering.
 
-When the node reports it is still syncing, the Node check reports that as loading rather than blocking: **a block found on a stale tip would be orphaned**, which is worth saying and not worth refusing to run over.
+When the node reports it is still syncing, the Node check reports that as loading rather than blocking: **a block found on a stale tip would be orphaned**.
 
 ## Backups and Restore
 
