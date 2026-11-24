@@ -78,33 +78,6 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'ui-sub',
   )
 
-  const nodeRpc = await readNodeRpc(effects, node)
-  const reported = nodeRpc?.network ?? 'mainnet'
-  const network = nodeNetwork(reported)
-  if (!network) {
-    throw new Error(
-      i18n('The selected node reports an unrecognized chain: ${chain}.', {
-        chain: reported,
-      }),
-    )
-  }
-
-  const rpcAddress = await nodeRpcBridge(effects, node, network)
-
-  // Flowee keeps only a hash of each password, so it is dialed with the
-  // credential this package minted and registered on it.
-  const rpcUser =
-    node === 'flowee'
-      ? (settings?.floweeRpcUser ?? '')
-      : (nodeRpc?.rpcUser ?? node)
-  const rpcPassword =
-    node === 'flowee'
-      ? (settings?.floweeRpcPassword ?? '')
-      : (nodeRpc?.rpcPassword ?? '')
-
-  const payoutAddress = settings?.payoutAddress ?? ''
-  const payoutChain = addressChain(payoutAddress)
-
   /**
    * Mining is impossible: report it, rather than throw. A thrown `main`
    * crash-loops under auto-restart and leaks a mount set every cycle.
@@ -122,6 +95,41 @@ export const main = sdk.setupMain(async ({ effects }) => {
       },
       requires: [],
     })
+
+  const nodeRpc = await readNodeRpc(effects, node)
+  if (!nodeRpc) {
+    return blocked(
+      i18n(
+        'The ${node} node is not installed, or is too old to share its network and RPC login. Install or update it, then start it.',
+        { node },
+      ),
+    )
+  }
+  const reported = nodeRpc.network
+  const network = nodeNetwork(reported)
+  if (!network) {
+    throw new Error(
+      i18n('The selected node reports an unrecognized chain: ${chain}.', {
+        chain: reported,
+      }),
+    )
+  }
+
+  const rpcAddress = await nodeRpcBridge(effects, node, network)
+
+  // Flowee keeps only a hash of each password, so it is dialed with the
+  // credential this package minted and registered on it.
+  const rpcUser =
+    node === 'flowee'
+      ? (settings?.floweeRpcUser ?? '')
+      : (nodeRpc.rpcUser ?? node)
+  const rpcPassword =
+    node === 'flowee'
+      ? (settings?.floweeRpcPassword ?? '')
+      : (nodeRpc.rpcPassword ?? '')
+
+  const payoutAddress = settings?.payoutAddress ?? ''
+  const payoutChain = addressChain(payoutAddress)
 
   const raisePayoutTask = (reason: string) =>
     sdk.action.createOwnTask(effects, configure, 'critical', {
@@ -229,6 +237,14 @@ export const main = sdk.setupMain(async ({ effects }) => {
       subcontainer: poolSub,
       exec: {
         command: ['pool-entrypoint.sh', `${rootDir}/pool/asicseer.conf`],
+        // Read by the address helpers `patches/apply.py` adds to the pool.
+        env: {
+          STARTOS_CASHADDR_PREFIX: addressPrefix[networkChain(network)].slice(
+            0,
+            -1,
+          ),
+          STARTOS_NODE: node,
+        },
         sigtermTimeout: 30_000,
       },
       ready: { display: i18n('Mining'), fn: miningReady },

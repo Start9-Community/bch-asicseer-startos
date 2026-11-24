@@ -42,7 +42,7 @@ const dict = {
   // actions/wipeMiningState.ts
   'Wipe Mining State': 32,
   'Clear the accumulated share counts and hashrate figures and restart the pool. Use it when a miner is stuck showing as idle or the statistics look wrong.': 33,
-  'Every share count and hashrate figure goes back to zero, and connected miners briefly disconnect. Blocks already found are not affected.': 34,
+  'Every share count and hashrate figure goes back to zero, and connected miners briefly disconnect. It also erases the list of blocks the pool has found and the payout credit miners have built up but not yet been paid.': 34,
 
   // init/taskConfigure.ts
   'Set the address your pool fee is paid to': 35,
@@ -73,6 +73,7 @@ const dict = {
   Node: 54,
   'The node is still syncing. Blocks found before it catches up would be rejected by the network.': 56,
   'Mining on ${chain}': 57,
+  'The ${node} node is not installed, or is too old to share its network and RPC login. Install or update it, then start it.': 58,
 } as const
 
 /**

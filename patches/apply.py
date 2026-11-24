@@ -14,104 +14,130 @@ cannot mine against one node.
 import sys
 
 CASHADDR_HELPERS = r"""
-/* CashAddr alphabet (BIP-0173 variant for BCH) */
+/* StartOS: the package passes the chain's CashAddr prefix and the node backend
+ * in the environment; the helpers below accept only addresses for that chain. */
+static const char *startos_cashaddr_prefix_(void)
+{
+    const char *p = getenv("STARTOS_CASHADDR_PREFIX");
+    return p && *p ? p : "bitcoincash";
+}
+
+static bool startos_node_is_flowee_(void)
+{
+    const char *n = getenv("STARTOS_NODE");
+    return n && !strcmp(n, "flowee");
+}
+
 static const char cashaddr_charset_[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
-/* Derive scriptPubKey from a BCH CashAddr address without needing wallet RPC.
- * Handles P2PKH (version 0x00 -> 25-byte script) and P2SH (version 0x08 -> 23-byte script).
- * Returns script byte length on success, 0 on failure. */
+static uint64_t cashaddr_polymod_(const unsigned char *v, size_t n)
+{
+    uint64_t c = 1;
+    for (size_t i = 0; i < n; i++) {
+        const uint8_t c0 = (uint8_t)(c >> 35);
+        c = ((c & 0x07ffffffffULL) << 5) ^ v[i];
+        if (c0 & 0x01) c ^= 0x98f2bc8e61ULL;
+        if (c0 & 0x02) c ^= 0x79b76d99e2ULL;
+        if (c0 & 0x04) c ^= 0xf33e5fb3c4ULL;
+        if (c0 & 0x08) c ^= 0xae2eabe2a8ULL;
+        if (c0 & 0x10) c ^= 0x1e4f43e470ULL;
+    }
+    return c ^ 1;
+}
+
+static void p2pkh_script_(unsigned char *script, const unsigned char *hash)
+{
+    script[0]=0x76; script[1]=0xa9; script[2]=0x14;
+    memcpy(script + 3, hash, 20);
+    script[23]=0x88; script[24]=0xac;
+}
+
+static void p2sh_script_(unsigned char *script, const unsigned char *hash)
+{
+    script[0]=0xa9; script[1]=0x14;
+    memcpy(script + 2, hash, 20);
+    script[22]=0x87;
+}
+
+/* Derive the scriptPubKey of a 20-byte-hash CashAddr address for this chain,
+ * after verifying its checksum with the chain's prefix. Returns the script
+ * length (25 P2PKH, 23 P2SH), or 0 for anything else. */
 static int cashaddr_to_scriptpubkey_(const char *address, unsigned char *script, int maxlen)
 {
-    if (!address || !script || maxlen < 23) return 0;
-    /* Skip "bitcoincash:" or any prefix before ':' */
-    const char *p = strrchr(address, ':');
-    const char *payload = p ? p + 1 : address;
-    int paylen = (int)strlen(payload);
-    /* CashAddr for a 20-byte hash: 34 data chars + 8 checksum chars = 42 */
-    if (paylen < 42) return 0;
-    int datalen = paylen - 8;
-    if (datalen != 34) return 0;
-    /* Decode base32 characters to 5-bit values */
-    unsigned char b5[34];
-    for (int i = 0; i < 34; i++) {
-        const char *q = strchr(cashaddr_charset_, (unsigned char)payload[i]);
-        if (!q) return 0;
-        b5[i] = (unsigned char)(q - cashaddr_charset_);
+    if (!address || !script || maxlen < 25) return 0;
+    const char *prefix = startos_cashaddr_prefix_();
+    const size_t plen = strlen(prefix);
+    const char *sep = strchr(address, ':');
+    const char *payload = address;
+    if (sep) {
+        if ((size_t)(sep - address) != plen || strncasecmp(address, prefix, plen)) return 0;
+        payload = sep + 1;
     }
-    /* Unpack 34 groups of 5 bits -> 21 bytes (168 bits) + 2 padding bits */
-    unsigned int acc = 0; int bits = 0;
-    unsigned char decoded[21]; int dlen = 0;
+    /* 34 data characters (version byte + 20-byte hash) and an 8-character checksum. */
+    if (strlen(payload) != 42) return 0;
+    unsigned char v[16 + 1 + 42];
+    if (plen > 16) return 0;
+    for (size_t i = 0; i < plen; i++) v[i] = (unsigned char)(prefix[i] & 0x1f);
+    v[plen] = 0;
+    bool lower = false, upper = false;
+    for (int i = 0; i < 42; i++) {
+        const char ch = payload[i];
+        if (ch >= 'a' && ch <= 'z') lower = true;
+        if (ch >= 'A' && ch <= 'Z') upper = true;
+        const char *q = strchr(cashaddr_charset_, ch | 0x20);
+        if (!q || !*q) return 0;
+        v[plen + 1 + i] = (unsigned char)(q - cashaddr_charset_);
+    }
+    if (lower && upper) return 0;
+    if (cashaddr_polymod_(v, plen + 1 + 42) != 0) return 0;
+    /* 34 groups of 5 bits: 21 bytes and 2 padding bits, which must be zero. */
+    const unsigned char *b5 = v + plen + 1;
+    unsigned char decoded[21];
+    unsigned int acc = 0; int bits = 0, dlen = 0;
     for (int i = 0; i < 34; i++) {
         acc = (acc << 5) | b5[i];
         bits += 5;
         if (bits >= 8) { bits -= 8; decoded[dlen++] = (unsigned char)((acc >> bits) & 0xFF); }
     }
-    if (dlen != 21) return 0;
-    unsigned char version = decoded[0];
-    const unsigned char *hash = decoded + 1;
-    if (version == 0x00) { /* P2PKH: OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG */
-        if (maxlen < 25) return 0;
-        script[0]=0x76; script[1]=0xa9; script[2]=0x14;
-        memcpy(script + 3, hash, 20);
-        script[23]=0x88; script[24]=0xac;
-        return 25;
-    }
-    if (version == 0x08) { /* P2SH: OP_HASH160 <20> OP_EQUAL */
-        if (maxlen < 23) return 0;
-        script[0]=0xa9; script[1]=0x14;
-        memcpy(script + 2, hash, 20);
-        script[22]=0x87;
-        return 23;
-    }
+    if (dlen != 21 || (acc & ((1u << bits) - 1))) return 0;
+    if (decoded[0] == 0x00) { p2pkh_script_(script, decoded + 1); return 25; }
+    if (decoded[0] == 0x08) { p2sh_script_(script, decoded + 1); return 23; }
     return 0;
 }
 
-/* Base58 alphabet (Bitcoin/BCH legacy addresses) */
 static const char base58_alphabet_[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-/* Derive scriptPubKey from a legacy Base58Check address (no wallet RPC needed).
- * Handles P2PKH (version 0x00, starts with '1' -> 25-byte script)
- * and P2SH  (version 0x05, starts with '3' -> 23-byte script).
- * Skips checksum verification — the address was already validated by the node.
- * Returns script byte length on success, 0 on failure. */
+/* Derive the scriptPubKey of a legacy Base58Check address for this chain,
+ * after verifying its double-SHA256 checksum and its version byte. Returns
+ * the script length (25 P2PKH, 23 P2SH), or 0 for anything else. */
 static int base58check_to_scriptpubkey_(const char *address, unsigned char *script, int maxlen)
 {
-    if (!address || !script || maxlen < 23) return 0;
-    int alen = (int)strlen(address);
+    if (!address || !script || maxlen < 25) return 0;
+    const int alen = (int)strlen(address);
     if (alen < 25 || alen > 35) return 0;
-    /* Map each character to 0-57 */
-    unsigned char digits[35];
+    unsigned char decoded[25]; memset(decoded, 0, sizeof(decoded));
+    int zeros = 0;
+    while (zeros < alen && address[zeros] == '1') zeros++;
     for (int i = 0; i < alen; i++) {
-        const char *q = strchr(base58_alphabet_, (unsigned char)address[i]);
-        if (!q) return 0;
-        digits[i] = (unsigned char)(q - base58_alphabet_);
-    }
-    /* Decode base58 big-integer into 25 bytes */
-    unsigned char decoded[25]; memset(decoded, 0, 25);
-    for (int i = 0; i < alen; i++) {
-        unsigned int carry = digits[i];
+        const char *q = strchr(base58_alphabet_, address[i]);
+        if (!q || !*q) return 0;
+        unsigned int carry = (unsigned int)(q - base58_alphabet_);
         for (int j = 24; j >= 0; j--) {
             carry += 58u * decoded[j];
             decoded[j] = (unsigned char)(carry & 0xFF);
             carry >>= 8;
         }
+        if (carry) return 0; /* longer than 25 bytes */
     }
-    unsigned char ver = decoded[0];
-    const unsigned char *hash = decoded + 1; /* bytes 1-20 are the hash160 */
-    if (ver == 0x00) { /* P2PKH: OP_DUP OP_HASH160 <20> hash OP_EQUALVERIFY OP_CHECKSIG */
-        if (maxlen < 25) return 0;
-        script[0]=0x76; script[1]=0xa9; script[2]=0x14;
-        memcpy(script + 3, hash, 20);
-        script[23]=0x88; script[24]=0xac;
-        return 25;
-    }
-    if (ver == 0x05) { /* P2SH: OP_HASH160 <20> hash OP_EQUAL */
-        if (maxlen < 23) return 0;
-        script[0]=0xa9; script[1]=0x14;
-        memcpy(script + 2, hash, 20);
-        script[22]=0x87;
-        return 23;
-    }
+    int lead = 0;
+    while (lead < 25 && !decoded[lead]) lead++;
+    if (lead != zeros) return 0; /* each leading '1' encodes exactly one zero byte */
+    unsigned char hash[32];
+    gen_hash(decoded, hash, 21);
+    if (memcmp(hash, decoded + 21, 4)) return 0;
+    const bool mainnet = !strcmp(startos_cashaddr_prefix_(), "bitcoincash");
+    if (decoded[0] == (mainnet ? 0x00 : 0x6f)) { p2pkh_script_(script, decoded + 1); return 25; }
+    if (decoded[0] == (mainnet ? 0x05 : 0xc4)) { p2sh_script_(script, decoded + 1); return 23; }
     return 0;
 }
 
@@ -132,8 +158,10 @@ SCRIPTPUBKEY_DERIVE = (
     '            int calen_ = cashaddr_to_scriptpubkey_(address, (unsigned char *)cscript_out, *cscript_len);\n'
     '            if (!calen_)\n'
     '                calen_ = base58check_to_scriptpubkey_(address, (unsigned char *)cscript_out, *cscript_len);\n'
-    '            if (!calen_)\n'
-    '                quit(1, "No scriptPubkey for %s: not a recognised address format", address);\n'
+    '            if (!calen_) {\n'
+    '                LOGWARNING("No scriptPubkey for %s: not an address this pool can pay on this chain", address);\n'
+    '                goto out;\n'
+    '            }\n'
     '            *cscript_len = calen_;\n'
     '            ret = true;\n'
     '            goto out;\n'
@@ -149,12 +177,16 @@ ISVALID_REJECT = (
 
 ISVALID_DERIVE = (
     '    if (!json_is_true(valid_val)) {\n'
-    '        /* The node validateaddress is legacy-base58-only (e.g. Flowee the\n'
-    '         * Hub) and rejects cashaddr. Accept the address if we can derive a\n'
-    '         * scriptPubKey from it ourselves; otherwise it really is invalid. */\n'
+    '        /* Flowee the Hub\'s validateaddress is legacy-base58-only and\n'
+    '         * rejects every cashaddr. On Flowee alone, accept an address the\n'
+    '         * helpers fully verify for this chain; anywhere else, and for\n'
+    '         * anything they reject, the node\'s answer stands. */\n'
     '        unsigned char dscript_[40]; int dlen_ = (int)sizeof(dscript_);\n'
-    '        int dn_ = cashaddr_to_scriptpubkey_(address, dscript_, dlen_);\n'
-    '        if (!dn_) dn_ = base58check_to_scriptpubkey_(address, dscript_, dlen_);\n'
+    '        int dn_ = 0;\n'
+    '        if (startos_node_is_flowee_()) {\n'
+    '            dn_ = cashaddr_to_scriptpubkey_(address, dscript_, dlen_);\n'
+    '            if (!dn_) dn_ = base58check_to_scriptpubkey_(address, dscript_, dlen_);\n'
+    '        }\n'
     '        if (!dn_) {\n'
     '            LOGDEBUG("Bitcoin address %s is NOT valid", address);\n'
     '            goto out;\n'
@@ -234,7 +266,7 @@ PATCHES = [
     ),
     (
         "Flowee's validateaddress is legacy-base58-only and reports isvalid=false "
-        'for every cashaddr — derive the script instead of rejecting the address',
+        'for every cashaddr — on Flowee, accept a fully verified address instead',
         'src/bitcoin.c',
         ISVALID_REJECT,
         ISVALID_DERIVE,

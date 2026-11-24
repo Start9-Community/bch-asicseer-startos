@@ -56,10 +56,10 @@ Both mount the same volumes; the dashboard reads what the pool writes.
 
 One volume, plus a read-only view of what the selected node publishes for its dependents.
 
-| Volume                        | Mount Point                        | Purpose                                                |
-| ----------------------------- | ---------------------------------- | ------------------------------------------------------ |
-| `main`                        | `/data`                            | The pool's configuration and logs                      |
-| The node's `public/rpc/` (ro) | `/mnt/node-rpc`, package code only | `rpc.json`: the node's chain, sync state and RPC login |
+| Volume                   | Mount Point                           | Purpose                                                    |
+| ------------------------ | ------------------------------------- | ---------------------------------------------------------- |
+| `main`                   | `/data`                               | The pool's configuration and logs                          |
+| The node's `public` (ro) | `/mnt/node-public`, package code only | `rpc/rpc.json`: the node's chain, sync state and RPC login |
 
 | Path                 | Written by | Holds                                   |
 | -------------------- | ---------- | --------------------------------------- |
@@ -131,7 +131,7 @@ Selecting **Flowee** raises a third task — on Flowee, not here — asking it t
 
 Once the node is running, the pool writes its configuration, starts, and accepts miners. Point hardware at the stratum address.
 
-**The pool does not refuse to start for a fixable problem.** When there is no payout address, when the address belongs to the wrong chain, or when the node is unreachable, the service comes up with a single failing health check that says which — rather than throwing. That is not politeness: a thrown start-up crash-loops under automatic restart and leaks a mount set on every cycle.
+**The pool does not refuse to start for a fixable problem.** When the node is not installed or too old to publish its network and login, when there is no payout address, when the address belongs to the wrong chain, or when the node is unreachable, the service comes up with a single failing health check that says which — rather than throwing. That is not politeness: a thrown start-up crash-loops under automatic restart and leaks a mount set on every cycle.
 
 ## Actions
 
@@ -155,10 +155,11 @@ The address your **pool fee** is paid to, the size of that fee, the pool identif
 - **What it changes:** the settings, and through them the generated configuration.
 - **Cost:** the pool restarts.
 - **The payout address is checked against the node's chain by its prefix**, locally. The node is not asked, because Flowee's address validation only understands the legacy format and rejects every modern Cash address as invalid.
+- **The pool then validates every address it pays — the payout address and each miner's username — through the node.** On Flowee, whose `validateaddress` rejects every Cash address, the pool's own check stands in: a CashAddr address must carry the node's chain prefix (or none) and a valid checksum, a legacy address a valid Base58Check checksum and that chain's version byte, and anything else is refused.
 
 ### Wipe Mining State
 
-Clears the accumulated share and block statistics.
+Clears everything the pool keeps under its log directory: share and hashrate statistics, the found-blocks list (`pool/blocks/`), and each miner's accumulated and postponed payout credit (`users/`), so the next block pays only for shares submitted after the wipe.
 
 - **What it changes:** sets a flag; the clearing happens on the next start, before the pool launches.
 - **Why then:** the pool reloads its totals from its own status file at start, so clearing them underneath a running pool would achieve nothing.
@@ -211,7 +212,7 @@ A restored instance comes back on the same node with the same fee address, re-re
 3. **Stratum is unencrypted** — that is the protocol. Miners are identified by the address in their username and nothing else.
 4. **A node is required but not required to be synced.** Blocks found while it is behind would be orphaned, and the Node check says so.
 5. **The pool configuration is regenerated at every start**; editing it directly does not survive.
-6. **Changing chains wipes the statistics**, because shares counted against one chain's difficulty mean nothing on another.
+6. **Changing chains wipes the statistics**, the found-blocks list and unpaid payout credit, because shares counted against one chain's difficulty mean nothing on another.
 7. **The payout address is validated by prefix only.** An address with no prefix is not judged.
 8. **Flowee needs a credential registered on it** before the pool can log in.
 
@@ -230,7 +231,7 @@ subcontainers:
   - ui-sub # the dashboard, same image, second entrypoint
 volumes:
   main: /data # pool/asicseer.conf, pool/log/, store.json
-  # the selected node's public/rpc is read-only at /mnt/node-rpc in the package container — rpc.json only
+  # the selected node's public volume is read-only at /mnt/node-public in the package container — rpc/rpc.json only
 file_models:
   - pool/asicseer.conf # generated in full by main at every start
   - store.json # node selection, payout address, fee, identifier, difficulty, flowee creds

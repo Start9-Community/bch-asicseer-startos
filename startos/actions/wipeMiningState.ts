@@ -11,7 +11,7 @@ export const wipeMiningState = sdk.Action.withoutInput(
       'Clear the accumulated share counts and hashrate figures and restart the pool. Use it when a miner is stuck showing as idle or the statistics look wrong.',
     ),
     warning: i18n(
-      'Every share count and hashrate figure goes back to zero, and connected miners briefly disconnect. Blocks already found are not affected.',
+      'Every share count and hashrate figure goes back to zero, and connected miners briefly disconnect. It also erases the list of blocks the pool has found and the payout credit miners have built up but not yet been paid.',
     ),
     allowedStatuses: 'any',
     group: null,

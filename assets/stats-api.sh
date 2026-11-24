@@ -10,7 +10,10 @@
 
 API_DIR="/var/www/html/api"
 CONF="/data/pool/asicseer.conf"
+# Sharelog files kept and counted: about four hours of block templates.
+SHARELOG_KEEP=500
 mkdir -p "$API_DIR"
+rm -f "${API_DIR}"/sharelog-debug-*.json
 
 # ── jq helper: parse hashrate suffix string ("1.234T") to numeric H/s ──
 # Both asicseer-pool and ckpool use suffix_string() which produces
@@ -117,18 +120,23 @@ read_workers_data() {
     [ -z "$DIFF_MAP" ] && DIFF_MAP='{}'
   fi
 
-  # Build a jq map { "<workername>": reject_count } from the pool's sharelog.
-  # ckpool writes every share submission (accepted OR rejected) as one JSON
-  # line to /data/{mode}/log/{blockheight}/{idstring}.sharelog including
-  # "workername" and "result": true/false. That is the authoritative source
-  # for per-worker reject counts (the pool's in-memory structs don't carry
-  # them). We aggregate across all sharelog files in the logdir tree.
+  # Build jq maps { "<workername>": count } of accepted and rejected shares
+  # from the pool's sharelog. asicseer-pool appends every share submission
+  # (accepted OR rejected) as one JSON line to
+  # /data/{mode}/log/{blockheight}/{workbase}.sharelog, one file per block
+  # template (about every 30s); the pool itself never reads them back.
+  # The counts cover the newest SHARELOG_KEEP files, and older files are
+  # deleted here so the logdir does not grow for as long as the pool runs.
   REJECT_MAP='{}'
   ACCEPT_MAP='{}'
-  # Limit to the 500 most-recently modified sharelogs to bound cost on
-  # long-running pools. Files are per block (~10 min worth of shares each).
-  SLFILES=$(find "/data/${1}/log" -maxdepth 4 -name '*.sharelog' -type f 2>/dev/null \
-              | head -n 500)
+  SLFILES=$(find "/data/${1}/log" -mindepth 2 -maxdepth 2 -path "/data/${1}/log/[0-9a-f]*" \
+              -name '*.sharelog' -type f -printf '%T@ %p\n' 2>/dev/null \
+              | sort -rn | cut -d' ' -f2-)
+  printf '%s\n' "$SLFILES" | sed '/^$/d' | tail -n +$((SHARELOG_KEEP + 1)) | xargs -r rm -f
+  # An hour untouched: the pool creates each height's directory before its first share.
+  find "/data/${1}/log" -mindepth 1 -maxdepth 1 -type d -name '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]' \
+    -empty -mmin +60 -delete 2>/dev/null
+  SLFILES=$(printf '%s\n' "$SLFILES" | sed '/^$/d' | head -n "$SHARELOG_KEEP")
   if [ -n "$SLFILES" ]; then
     # shellcheck disable=SC2086
     SHAREMAPS=$(cat $SLFILES 2>/dev/null \
@@ -152,14 +160,6 @@ read_workers_data() {
     [ -z "$ACCEPT_MAP" ] && ACCEPT_MAP='{}'
     [ -z "$REJECT_MAP" ] && REJECT_MAP='{}'
   fi
-
-  # Diagnostic dump so we can see the sharelog state from the browser even
-  # when no sharelog files exist yet (pre-first-share state).
-  SAMPLE=$(printf '%s\n' "$SLFILES" | head -n 1 | xargs -r head -n 1 2>/dev/null)
-  NFILES=$(printf '%s\n' "$SLFILES" | sed '/^$/d' | wc -l | tr -d ' ')
-  printf '%s' "{\"mode\":\"$1\",\"sharelog_files\":${NFILES},\"accept_map\":${ACCEPT_MAP},\"reject_map\":${REJECT_MAP},\"sample_line\":$(printf '%s' "$SAMPLE" | jq -Rs . 2>/dev/null || echo '""')}" \
-    > "${API_DIR}/sharelog-debug-${1}.json.tmp" 2>/dev/null \
-    && mv "${API_DIR}/sharelog-debug-${1}.json.tmp" "${API_DIR}/sharelog-debug-${1}.json" 2>/dev/null
 
   if [ -d "$UDIR" ] && ls "$UDIR"/* >/dev/null 2>&1; then
     WORKERS='[]'
@@ -264,8 +264,15 @@ while true; do
   printf '%s' "{\"stats\":${POOL_STATS},\"users\":${POOL_USERS},\"workers\":${POOL_WORKERS}}" \
     > "${API_DIR}/pool-stats.json.tmp" && mv "${API_DIR}/pool-stats.json.tmp" "${API_DIR}/pool-stats.json"
 
-  printf '%s' "{\"blockchain\":${CHAIN_INFO},\"mining\":${MINING_INFO},\"network\":${NET_INFO},\"mempool\":${MEMPOOL_INFO}}" \
-    > "${API_DIR}/node-stats.json.tmp" && mv "${API_DIR}/node-stats.json.tmp" "${API_DIR}/node-stats.json"
+  # Only the fields the dashboard shows.
+  jq -cn --argjson bc "$CHAIN_INFO" --argjson mining "$MINING_INFO" \
+    --argjson net "$NET_INFO" --argjson mem "$MEMPOOL_INFO" '{
+      blockchain: ($bc | {chain, blocks, headers, verificationprogress, difficulty, size_on_disk}),
+      mining: ($mining | {difficulty, networkhashps}),
+      network: ($net | {subversion, connections}),
+      mempool: ($mem | {bytes})
+    }' > "${API_DIR}/node-stats.json.tmp" 2>/dev/null \
+    && mv "${API_DIR}/node-stats.json.tmp" "${API_DIR}/node-stats.json"
 
   printf '%s' "{\"pool\":${POOL_STATS},\"node_rpc\":\"${RPC_STATUS}\"}" \
     > "${API_DIR}/service-status.json.tmp" && mv "${API_DIR}/service-status.json.tmp" "${API_DIR}/service-status.json"
