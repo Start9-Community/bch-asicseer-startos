@@ -12,7 +12,7 @@ export const shape = z.looseObject({
   disableDevDonation: z.boolean().catch(false),
   // Flowee stores only a hash and cannot hand a password back, so the pool
   // mints its own and Select Node Backend registers it there. BCHN and BCHD
-  // publish theirs in their own `store.json`.
+  // publish theirs on their `public` volume.
   floweeRpcUser: z.string().catch(''),
   floweeRpcPassword: z.string().catch(''),
   // Set by Wipe Mining State, cleared by `main` on the next start. Outside

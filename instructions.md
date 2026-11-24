@@ -31,9 +31,9 @@ Current hashrate, accepted shares, connected workers, the best share found so fa
 ### Actions
 
 - **Configure** — your payout address, the fee the pool keeps from each block, the identifier written into the coinbase of blocks you find, the difficulty new miners start at, and whether to keep the developer donation. Saving restarts the pool.
-- **Select Node Backend** — switch which node the pool mines on. If the new node is on a different chain, the accumulated share and hashrate figures are cleared, because they do not carry across chains.
+- **Select Node Backend** — switch which node the pool mines on. If the new node is on a different chain, the accumulated share and hashrate figures are cleared, along with the found-block list and unpaid payout credit, because they do not carry across chains.
 - **Connection Info** — the address and login format for your miners.
-- **Wipe Mining State** — clears every share count and hashrate figure and restarts. Use it when a miner is stuck showing as idle or the statistics look wrong. Blocks already found are not affected.
+- **Wipe Mining State** — clears every share count and hashrate figure and restarts. Use it when a miner is stuck showing as idle or the statistics look wrong. It also erases the list of blocks the pool has found and the payout credit miners have built up but not yet been paid.
 
 ## Limitations
 
