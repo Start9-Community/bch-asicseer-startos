@@ -38,7 +38,7 @@ log "starting asicseer conf=${CONF} rpc_target=${RPC_TARGET:-unknown} rpc_user=$
              --data-binary '{"jsonrpc":"1.0","id":"sl","method":"getblockcount","params":[]}' \
              -H 'content-type: text/plain;' "http://${RPC_TARGET}/" 2>/dev/null \
            | jq -r '.result // empty' 2>/dev/null)
-      if [ -n "$BC" ] && [ "$BC" -gt 0 ] 2>/dev/null; then
+      if [ -n "$BC" ] && [ "$BC" -ge 0 ] 2>/dev/null; then
         # Current and next 2 heights — covers the race where the pool learns of
         # a new block slightly before or after this loop does.
         for d in 0 1 2; do
