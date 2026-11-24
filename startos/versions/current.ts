@@ -1,18 +1,18 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '1.5.4:30',
+  version: '1.5.4:31',
   releaseNotes: {
     en_US:
-      'Dashboard update: other websites open in your browser can no longer remove workers from the dashboard or read its statistics. Workers named with an underscore (bitcoincash:q…_rig1) now show their name, appear under My Devices, and can be deleted.',
+      'ASICSeer no longer has access to its node’s data volume: it reads only the network and RPC login the node publishes for its dependents, and follows a change to either at once. Update your node first, to Bitcoin Cash Node 29.0.0:17, Bitcoin Cash Daemon 0.22.2:8 or Flowee the Hub 2026.5.2:19 or later.',
     es_ES:
-      'Actualización del panel: otros sitios web abiertos en su navegador ya no pueden eliminar trabajadores del panel ni leer sus estadísticas. Los trabajadores nombrados con un guion bajo (bitcoincash:q…_rig1) ahora muestran su nombre, aparecen en My Devices y se pueden eliminar.',
+      'ASICSeer ya no tiene acceso al volumen de datos de su nodo: solo lee la red y el inicio de sesión RPC que el nodo publica para sus dependientes, y sigue al instante cualquier cambio en ellos. Actualice primero su nodo, a Bitcoin Cash Node 29.0.0:17, Bitcoin Cash Daemon 0.22.2:8 o Flowee the Hub 2026.5.2:19 o posterior.',
     de_DE:
-      'Dashboard-Update: Andere in Ihrem Browser geöffnete Websites können keine Worker mehr aus dem Dashboard entfernen und seine Statistiken nicht mehr lesen. Worker, die mit einem Unterstrich benannt sind (bitcoincash:q…_rig1), zeigen jetzt ihren Namen, erscheinen unter My Devices und lassen sich löschen.',
+      'ASICSeer hat keinen Zugriff mehr auf das Datenvolume seines Knotens: Es liest nur das Netzwerk und die RPC-Anmeldung, die der Knoten für abhängige Dienste veröffentlicht, und folgt einer Änderung daran sofort. Aktualisieren Sie zuerst Ihren Knoten, auf Bitcoin Cash Node 29.0.0:17, Bitcoin Cash Daemon 0.22.2:8 oder Flowee the Hub 2026.5.2:19 oder neuer.',
     pl_PL:
-      'Aktualizacja panelu: inne strony otwarte w przeglądarce nie mogą już usuwać koparek z panelu ani odczytywać jego statystyk. Koparki nazwane z podkreślnikiem (bitcoincash:q…_rig1) pokazują teraz swoją nazwę, pojawiają się w My Devices i można je usunąć.',
+      'ASICSeer nie ma już dostępu do woluminu danych swojego węzła: odczytuje tylko sieć i dane logowania RPC, które węzeł publikuje dla usług zależnych, i od razu podąża za ich zmianą. Najpierw zaktualizuj węzeł do Bitcoin Cash Node 29.0.0:17, Bitcoin Cash Daemon 0.22.2:8 lub Flowee the Hub 2026.5.2:19 albo nowszego.',
     fr_FR:
-      'Mise à jour du tableau de bord : les autres sites ouverts dans votre navigateur ne peuvent plus supprimer de mineurs du tableau de bord ni lire ses statistiques. Les mineurs nommés avec un tiret bas (bitcoincash:q…_rig1) affichent désormais leur nom, apparaissent dans My Devices et peuvent être supprimés.',
+      'ASICSeer n’a plus accès au volume de données de son nœud : il lit seulement le réseau et l’identifiant RPC que le nœud publie pour ses dépendants, et suit aussitôt tout changement de l’un ou de l’autre. Mettez d’abord votre nœud à jour, vers Bitcoin Cash Node 29.0.0:17, Bitcoin Cash Daemon 0.22.2:8 ou Flowee the Hub 2026.5.2:19 ou ultérieur.',
   },
   migrations: {
     up: async ({ effects }) => {},

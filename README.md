@@ -54,12 +54,12 @@ Both mount the same volumes; the dashboard reads what the pool writes.
 
 ## Volume and Data Layout
 
-One volume, plus a read-only view of the selected node's.
+One volume, plus a read-only view of what the selected node publishes for its dependents.
 
-| Volume                 | Mount Point | Purpose                           |
-| ---------------------- | ----------- | --------------------------------- |
-| `main`                 | `/data`     | The pool's configuration and logs |
-| The node's `main` (ro) | `/mnt/node` | The node's own store              |
+| Volume                        | Mount Point                        | Purpose                                                |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------ |
+| `main`                        | `/data`                            | The pool's configuration and logs                      |
+| The node's `public/rpc/` (ro) | `/mnt/node-rpc`, package code only | `rpc.json`: the node's chain, sync state and RPC login |
 
 | Path                 | Written by | Holds                                   |
 | -------------------- | ---------- | --------------------------------------- |
@@ -67,7 +67,7 @@ One volume, plus a read-only view of the selected node's.
 | `pool/log/`          | The pool   | Share and block history, and the totals |
 | `store.json`         | Actions    | Everything the user configures          |
 
-**The node's volume is mounted for its store, not for chain data.** What is read from it is which chain the node is on and — for two of the three nodes — the RPC credentials it published there. Nothing about the blockchain is read from disk.
+**Only what the node publishes for its dependents is mounted, and only into the package's own container** — no subcontainer sees any of the node's files. What is read from it is which chain the node is on, whether it reports itself synced, and — for two of the three nodes — the RPC credentials it published there. The chain and credentials are read reactively, so a node that switches chains or changes its RPC login restarts the service onto it. Nothing about the blockchain is read from disk.
 
 **The pool's totals live in its log directory**, which is why wiping statistics means clearing that directory rather than a database.
 
@@ -92,11 +92,11 @@ Three optional dependencies, **exactly one enabled** — whichever node you sele
 
 | Dependency          | Required         | Minimum version | Health checks required | Why                            |
 | ------------------- | ---------------- | --------------- | ---------------------- | ------------------------------ |
-| Bitcoin Cash Node   | Only if selected | `29.0.0:11`     | `primary`              | Block templates and submission |
-| Bitcoin Cash Daemon | Only if selected | `0.22.2:0`      | `rpc-plaintext`        | The same                       |
-| Flowee the Hub      | Only if selected | `2026.5.2:12`   | `primary`              | The same                       |
+| Bitcoin Cash Node   | Only if selected | `29.0.0:17`     | `primary`              | Block templates and submission |
+| Bitcoin Cash Daemon | Only if selected | `0.22.2:8`      | `rpc-plaintext`        | The same                       |
+| Flowee the Hub      | Only if selected | `2026.5.2:19`   | `primary`              | The same                       |
 
-**Bitcoin Cash Node's minimum is the first build that moves its RPC binding when it switches chain**; on an older one the pool loses the node after a switch.
+**Each minimum is the node's first build that publishes `rpc.json` on its `public` volume**; against an older node the pool cannot learn the chain or the login.
 
 **They are gated on being up, not on being synced**, and that is a deliberate trade: a node's initial sync takes days, and refusing to start for that long is less useful than starting and _reporting_ that the chain is behind — which the Node health check does.
 
@@ -186,17 +186,15 @@ Up to four, and one of them lands on another package.
 
 Three checks.
 
-| Check         | Displayed as    | Method                                    |
-| ------------- | --------------- | ----------------------------------------- |
-| `pool`        | "Mining"        | The pool's own log, then the stratum port |
-| `ui`          | "Web Dashboard" | Port 81 is listening                      |
-| `node-status` | "Node"          | The node's store, read from the mount     |
+| Check         | Displayed as    | Method                                     |
+| ------------- | --------------- | ------------------------------------------ |
+| `pool`        | "Mining"        | The pool's own log, then the stratum port  |
+| `ui`          | "Web Dashboard" | Port 81 is listening                       |
+| `node-status` | "Node"          | The node's `rpc.json`, read from the mount |
 
 **The mining check reads the log before it probes the port, and that is the important part.** ASICSeer holds the stratum port open even when it cannot get a block template — so a bare port check would report a healthy pool that mines nothing. The check looks for the two failures that produce exactly that: a payout address the node rejected, and a node that is not answering.
 
-**The Node check is how a chain change is noticed.** The node's chain is a file, not a reactive source, so it is re-read here — and it has to be, because a binding a node moves off is left _disabled_ rather than removed, and a disabled binding still resolves. The address read would never go null on its own.
-
-When it sees the chain has moved, it restarts the service. When the node reports it is still syncing, it reports that as loading rather than blocking: **a block found on a stale tip would be orphaned**, which is worth saying and not worth refusing to run over.
+When the node reports it is still syncing, the Node check reports that as loading rather than blocking: **a block found on a stale tip would be orphaned**, which is worth saying and not worth refusing to run over.
 
 ## Backups and Restore
 
@@ -232,15 +230,15 @@ subcontainers:
   - ui-sub # the dashboard, same image, second entrypoint
 volumes:
   main: /data # pool/asicseer.conf, pool/log/, store.json
-  # the selected node's main volume is read-only at /mnt/node — for its store, not chain data
+  # the selected node's public/rpc is read-only at /mnt/node-rpc in the package container — rpc.json only
 file_models:
   - pool/asicseer.conf # generated in full by main at every start
   - store.json # node selection, payout address, fee, identifier, difficulty, flowee creds
 startos_managed_env_vars: [] # everything is asicseer.conf
 dependencies: # all three optional; exactly one enabled at a time, from the stored selection
-  - bitcoincashd # >=29.0.0:11; healthChecks: [primary]; RPC port varies per chain
-  - bchd # >=0.22.2:0; healthChecks: [rpc-plaintext]; dialed via the plaintext proxy, no cert to trust
-  - flowee # >=2026.5.2:12; healthChecks: [primary]; needs a credential registered via createTask
+  - bitcoincashd # >=29.0.0:17; healthChecks: [primary]; RPC port varies per chain
+  - bchd # >=0.22.2:8; healthChecks: [rpc-plaintext]; dialed via the plaintext proxy, no cert to trust
+  - flowee # >=2026.5.2:19; healthChecks: [primary]; needs a credential registered via createTask
 interfaces:
   pool-mining: { type: p2p, port: 3334 } # raw TCP, schemeOverride stratum+tcp
   web-ui: { type: ui, port: 81 } # no authentication
@@ -257,5 +255,5 @@ tasks:
 health_checks:
   - pool # displayed "Mining"; scrapes the log before probing the port
   - ui # displayed "Web Dashboard"
-  - node-status # displayed "Node"; re-reads the node's chain and restarts on a change
+  - node-status # displayed "Node"; the node's sync state
 ```

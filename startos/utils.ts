@@ -1,4 +1,4 @@
-import { T } from '@start9labs/start-sdk'
+import { FileHelper, T, z } from '@start9labs/start-sdk'
 import {
   rpcPlaintextHostId as bchdRpcHostId,
   rpcPlaintextPort as bchdRpcPort,
@@ -19,15 +19,51 @@ export const uiInterfaceId = 'web-ui'
 /** ASICSeer's own volume, as seen inside every subcontainer. */
 export const rootDir = '/data'
 
-/**
- * Where the selected node's `main` volume is mounted, read-only — for its
- * `store.json`, not for chain data: the chain it is on and, on BCHN and BCHD,
- * its RPC credentials.
- */
-export const nodeMountpoint = '/mnt/node'
-
 export const NODE_IDS = ['bitcoincashd', 'bchd', 'flowee'] as const
 export type NodeId = (typeof NODE_IDS)[number]
+
+/** Where the selected node's `public` `rpc/` directory is mounted, read-only, in this package's own container. */
+const nodeRpcMountpoint = '/mnt/node-rpc'
+
+export const nodeRpcJson = FileHelper.json(
+  `${nodeRpcMountpoint}/rpc.json`,
+  z.looseObject({
+    network: z.string().optional().catch(undefined),
+    fullySynced: z.boolean().optional().catch(undefined),
+    rpcUser: z.string().optional().catch(undefined),
+    rpcPassword: z.string().optional().catch(undefined),
+  }),
+)
+
+/**
+ * The chain the selected node is on and, on BCHN and BCHD, its RPC login, as
+ * the node publishes them on its `public` volume. A `.const()` read, so a
+ * change re-runs `main`; `null` while the node is absent or too old to publish.
+ */
+export const readNodeRpc = async (effects: T.Effects, node: NodeId) => {
+  try {
+    await sdk.mount(effects, {
+      location: nodeRpcMountpoint,
+      // The node packages publish this layout but don't export its ids.
+      target: {
+        packageId: node,
+        volumeId: 'public',
+        subpath: 'rpc',
+        readonly: true,
+        idmap: [],
+      },
+    })
+  } catch {
+    return null
+  }
+  return nodeRpcJson
+    .read(({ network, rpcUser, rpcPassword }) => ({
+      network,
+      rpcUser,
+      rpcPassword,
+    }))
+    .const(effects)
+}
 
 /** The chains a node can report. `main` wipes the pool's stats when it moves. */
 export const NETWORKS = [

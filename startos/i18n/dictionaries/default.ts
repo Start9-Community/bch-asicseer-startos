@@ -71,7 +71,6 @@ const dict = {
   'The dashboard is ready': 52,
   'The dashboard is not ready': 53,
   Node: 54,
-  'The node switched from ${from} to ${to}. Restarting.': 55,
   'The node is still syncing. Blocks found before it catches up would be rejected by the network.': 56,
   'Mining on ${chain}': 57,
 } as const

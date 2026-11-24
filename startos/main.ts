@@ -5,21 +5,14 @@ import { i18n } from './i18n'
 import { sdk } from './sdk'
 import {
   Network,
-  nodeMountpoint,
   nodeNetwork,
   nodeRpcBridge,
+  nodeRpcJson,
   poolPort,
+  readNodeRpc,
   rootDir,
   uiPort,
 } from './utils'
-
-/** The fields `main` reads out of the selected node's own `store.json`. */
-type NodeStore = {
-  network?: string
-  rpcUser?: string
-  rpcPassword?: string
-  fullySynced?: boolean
-}
 
 /**
  * Which chain an address belongs to, by prefix. The node is not asked: Flowee's
@@ -65,20 +58,12 @@ export const main = sdk.setupMain(async ({ effects }) => {
     .const(effects)
   const node = settings?.node ?? 'bitcoincashd'
 
-  const mounts = sdk.Mounts.of()
-    .mountVolume({
-      volumeId: 'main',
-      subpath: null,
-      mountpoint: rootDir,
-      readonly: false,
-    })
-    .mountDependency({
-      dependencyId: node,
-      volumeId: 'main',
-      subpath: null,
-      mountpoint: nodeMountpoint,
-      readonly: true,
-    })
+  const mounts = sdk.Mounts.of().mountVolume({
+    volumeId: 'main',
+    subpath: null,
+    mountpoint: rootDir,
+    readonly: false,
+  })
 
   const poolSub = sdk.SubContainer.of(
     effects,
@@ -93,20 +78,8 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'ui-sub',
   )
 
-  const readNodeStore = async (): Promise<NodeStore | null> => {
-    const res = await poolSub
-      .exec(['cat', `${nodeMountpoint}/store.json`])
-      .catch(() => null)
-    if (!res || res.exitCode !== 0) return null
-    try {
-      return JSON.parse(res.stdout.toString()) as NodeStore
-    } catch {
-      return null
-    }
-  }
-
-  const nodeStore = await readNodeStore()
-  const reported = nodeStore?.network ?? 'mainnet'
+  const nodeRpc = await readNodeRpc(effects, node)
+  const reported = nodeRpc?.network ?? 'mainnet'
   const network = nodeNetwork(reported)
   if (!network) {
     throw new Error(
@@ -123,11 +96,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
   const rpcUser =
     node === 'flowee'
       ? (settings?.floweeRpcUser ?? '')
-      : (nodeStore?.rpcUser ?? node)
+      : (nodeRpc?.rpcUser ?? node)
   const rpcPassword =
     node === 'flowee'
       ? (settings?.floweeRpcPassword ?? '')
-      : (nodeStore?.rpcPassword ?? '')
+      : (nodeRpc?.rpcPassword ?? '')
 
   const payoutAddress = settings?.payoutAddress ?? ''
   const payoutChain = addressChain(payoutAddress)
@@ -278,23 +251,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
       ready: {
         display: i18n('Node'),
         fn: async () => {
-          // The node's chain is a file, not a reactive source, so a change is
-          // noticed here — for every node, BCHN included: the binding it moves
-          // off a chain is left disabled, and a disabled binding still
-          // resolves, so the bridge read never goes null.
-          const current = await readNodeStore()
-          const moved = current?.network && nodeNetwork(current.network)
-          if (moved && moved !== network) {
-            console.info(
-              i18n('The node switched from ${from} to ${to}. Restarting.', {
-                from: network,
-                to: moved,
-              }),
-            )
-            await effects.restart()
-            return { result: 'loading', message: null } as const
-          }
-
+          const current = await nodeRpcJson.read().once()
           if (!current) {
             return {
               result: 'failure',
