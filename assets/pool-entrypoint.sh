@@ -45,6 +45,8 @@ log "starting asicseer conf=${CONF} rpc_target=${RPC_TARGET:-unknown} rpc_user=$
           HEX=$(printf '%08x' "$((BC + d))")
           mkdir -p "/data/pool/log/${HEX}" 2>/dev/null
           chmod 0755 "/data/pool/log/${HEX}" 2>/dev/null
+          # Keep live heights out of the dashboard's age-based cleanup.
+          touch -c "/data/pool/log/${HEX}" 2>/dev/null
         done
       fi
     fi

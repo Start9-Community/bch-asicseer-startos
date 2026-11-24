@@ -79,16 +79,18 @@ static int cashaddr_to_scriptpubkey_(const char *address, unsigned char *script,
     if (plen > 16) return 0;
     for (size_t i = 0; i < plen; i++) v[i] = (unsigned char)(prefix[i] & 0x1f);
     v[plen] = 0;
+    /* The single-case rule covers the whole address, prefix included. */
     bool lower = false, upper = false;
+    for (const char *c = address; *c; c++) {
+        if (*c >= 'a' && *c <= 'z') lower = true;
+        if (*c >= 'A' && *c <= 'Z') upper = true;
+    }
+    if (lower && upper) return 0;
     for (int i = 0; i < 42; i++) {
-        const char ch = payload[i];
-        if (ch >= 'a' && ch <= 'z') lower = true;
-        if (ch >= 'A' && ch <= 'Z') upper = true;
-        const char *q = strchr(cashaddr_charset_, ch | 0x20);
+        const char *q = strchr(cashaddr_charset_, payload[i] | 0x20);
         if (!q || !*q) return 0;
         v[plen + 1 + i] = (unsigned char)(q - cashaddr_charset_);
     }
-    if (lower && upper) return 0;
     if (cashaddr_polymod_(v, plen + 1 + 42) != 0) return 0;
     /* 34 groups of 5 bits: 21 bytes and 2 padding bits, which must be zero. */
     const unsigned char *b5 = v + plen + 1;

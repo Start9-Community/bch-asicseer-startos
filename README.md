@@ -67,6 +67,8 @@ One volume, plus a read-only view of what the selected node publishes for its de
 | `pool/log/`          | The pool   | Share and block history, and the totals |
 | `store.json`         | Actions    | Everything the user configures          |
 
+**Share-log retention is bounded.** The dashboard keeps and counts the newest 500 share-log files and removes empty height directories untouched for an hour. The entrypoint refreshes the current and next two height directories every 30 seconds to protect live logging paths from that cleanup.
+
 **Only what the node publishes for its dependents is mounted, and only into the package's own container** — no subcontainer sees any of the node's files. What is read from it is which chain the node is on, whether it reports itself synced, and — for two of the three nodes — the RPC credentials it published there. The chain and credentials are read reactively, so a node that switches chains or changes its RPC login restarts the service onto it. Nothing about the blockchain is read from disk.
 
 **The pool's totals live in its log directory**, which is why wiping statistics means clearing that directory rather than a database.
